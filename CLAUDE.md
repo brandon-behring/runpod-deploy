@@ -160,10 +160,9 @@ hard-codes stdout and breaks those callers' output discipline.
 - CLI entry (`cli.main`) configures the root logger with a stdout handler so
   the current `tail -f` UX is preserved for direct CLI users.
 
-**Current state (2026-05-12)**: 14 `print(..., flush=True)` calls and 2
-`print(..., file=sys.stderr)` calls still exist across `cli.py`,
-`orchestrator.py`, `provider.py`, `transport.py`. Migration is **Phase H**,
-tracked as scheduled tech debt, not a blocker for current work.
+**Status**: Phase H completed in 698c04a — all `src/runpod_deploy/`
+output now uses `logging`. CLI entry (`cli.main`) configures the root
+logger to preserve the `tail -f` UX for direct CLI users.
 
 ## 10. Imports
 
