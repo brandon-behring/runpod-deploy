@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import shlex
-import sys
 import time
 from pathlib import Path
 
@@ -28,6 +28,8 @@ from runpod_deploy.provider import (
 from runpod_deploy.transport import RemoteRunner, RsyncTransfer
 
 __all__ = ["run_job"]
+
+logger = logging.getLogger(__name__)
 
 
 def run_job(
@@ -72,7 +74,7 @@ def run_job(
         if should_stop:
             stop_pod(pod.pod_id, dry_run=dry_run, state_file=spec.resolved_state_file)
         elif not dry_run:
-            print(f"[warn] pod preserved: {pod.pod_id}", file=sys.stderr)
+            logger.warning(f"[warn] pod preserved: {pod.pod_id}")
 
 
 def _resolve_volume_id(spec: RunpodJobSpec, *, offline: bool) -> str | None:
@@ -108,12 +110,11 @@ def _resolve_gpu_id(spec: RunpodJobSpec, *, offline: bool) -> str:
 def _print_budget(spec: RunpodJobSpec) -> None:
     timeout_minutes = spec.budget.timeout_sec / 60
     estimated_spend = spec.budget.assumed_hourly_rate_usd * (timeout_minutes / 60)
-    print(
+    logger.info(
         "[budget] "
         f"cap=${spec.budget.cost_cap_usd:.2f} "
         f"assumed_rate=${spec.budget.assumed_hourly_rate_usd:.2f}/hr "
-        f"timeout={timeout_minutes:.1f}m estimated_spend=${estimated_spend:.2f}",
-        flush=True,
+        f"timeout={timeout_minutes:.1f}m estimated_spend=${estimated_spend:.2f}"
     )
     if estimated_spend > spec.budget.cost_cap_usd + 1e-9:
         raise RuntimeError("configured timeout exceeds cost cap under the assumed hourly rate")
@@ -131,7 +132,7 @@ def _wait_for_sshd(runner: RemoteRunner) -> None:
             return
         except Exception as exc:
             last_error = exc
-            print(f"[ssh] not ready ({type(exc).__name__}); retrying in {delay}s", flush=True)
+            logger.info(f"[ssh] not ready ({type(exc).__name__}); retrying in {delay}s")
             time.sleep(delay)
     raise RuntimeError(f"sshd never became ready; last_error={last_error!r}")
 
@@ -147,10 +148,10 @@ def _run_commands(
         rendered = ctx.render(command.command)
         if command.with_env:
             rendered = f"{_remote_env_prefix(ctx)} {rendered}"
-        print(f"[{label}] {rendered[:120]}", flush=True)
+        logger.info(f"[{label}] {rendered[:120]}")
         result = runner.ssh_exec(rendered, timeout_sec=command.timeout_sec, check=True)
         if result.stdout:
-            print(result.stdout, flush=True)
+            logger.info(result.stdout)
 
 
 def _push_workspace(runner: RemoteRunner, ctx: JobContext) -> None:
@@ -183,7 +184,7 @@ def _launch_remote_job(runner: RemoteRunner, ctx: JobContext) -> None:
             f"test -f {shlex.quote(run.log_path)}", timeout_sec=10, check=False
         )
         if result.returncode == 0:
-            print(f"[remote] log created: {run.log_path}", flush=True)
+            logger.info(f"[remote] log created: {run.log_path}")
             return
         time.sleep(1)
     raise RuntimeError(f"remote job did not create {run.log_path}")
@@ -192,20 +193,19 @@ def _launch_remote_job(runner: RemoteRunner, ctx: JobContext) -> None:
 def _monitor_remote_log(runner: RemoteRunner, ctx: JobContext) -> None:
     run = ctx.spec.run
     deadline = time.time() + ctx.spec.budget.timeout_sec
-    print(
+    logger.info(
         f"[monitor] polling {run.log_path}; "
-        f"timeout={ctx.spec.budget.timeout_sec // 60}m success={run.success_marker!r}",
-        flush=True,
+        f"timeout={ctx.spec.budget.timeout_sec // 60}m success={run.success_marker!r}"
     )
     if runner.dry_run:
         runner.ssh_exec(_log_status_command(ctx), timeout_sec=30, check=False)
-        print("[dry-run] skipping monitor loop", flush=True)
+        logger.info("[dry-run] skipping monitor loop")
         return
     while time.time() < deadline:
         status = runner.ssh_exec(_log_status_command(ctx), timeout_sec=30, check=False)
         stdout = status.stdout.strip()
         if stdout:
-            print(stdout[-4000:], flush=True)
+            logger.info(stdout[-4000:])
         if "__RUNPOD_DEPLOY_DONE__" in stdout:
             return
         if "__RUNPOD_DEPLOY_FAIL__" in stdout:
@@ -235,9 +235,7 @@ def _pull_artifacts(
         except Exception as exc:
             if required:
                 raise
-            print(
-                f"[warn] optional pull skipped for {artifact.remote_path}: {exc}", file=sys.stderr
-            )
+            logger.warning(f"[warn] optional pull skipped for {artifact.remote_path}: {exc}")
     if not runner.dry_run:
         write_pull_manifest(ctx, failed=failed, pod=pod)
 

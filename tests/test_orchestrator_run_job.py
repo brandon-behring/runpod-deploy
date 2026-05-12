@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -147,8 +148,9 @@ def test_run_job_full_happy_path_network_volume(
     fake_popen: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
     _freeze_time(monkeypatch)
     fake_popen(returncode_val=0)
     _enqueue_runpodctl_happy_path(fake_subprocess)
@@ -167,8 +169,7 @@ def test_run_job_full_happy_path_network_volume(
     assert any("runpodctl pod get pod-xyz" in s for s in argv_strs)
     assert any(s.startswith("rsync ") for s in argv_strs)
     assert any("runpodctl pod stop pod-xyz" in s for s in argv_strs)
-    out = capsys.readouterr().out
-    assert "__RUNPOD_DEPLOY_DONE__" in out
+    assert "__RUNPOD_DEPLOY_DONE__" in caplog.text
     # Pull manifest written under project_root/artifacts/runpod/<ts>/
     manifests = list(tmp_path.rglob("runpod_deploy_pull_manifest.json"))
     assert len(manifests) == 1
@@ -183,7 +184,6 @@ def test_run_job_with_env_prefixes_setup_command(
     fake_popen: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
     _freeze_time(monkeypatch)
     fake_popen(returncode_val=0)
@@ -209,13 +209,13 @@ def test_run_job_optional_artifact_pull_failure_is_warned(
     fake_popen: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
     _freeze_time(monkeypatch)
     fake_popen(returncode_val=0)
     _enqueue_runpodctl_happy_path(fake_subprocess)
     fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="__RUNPOD_DEPLOY_DONE__\n"))
-    # rsync pull source argv (argv[-2]) starts with "root@"; rsync push has it as argv[-1].
     fake_subprocess.when(
         lambda argv: (
             bool(argv) and argv[0] == "rsync" and len(argv) >= 2 and argv[-2].startswith("root@")
@@ -227,8 +227,7 @@ def test_run_job_optional_artifact_pull_failure_is_warned(
 
     run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
 
-    err = capsys.readouterr().err
-    assert "[warn] optional pull skipped" in err
+    assert "[warn] optional pull skipped" in caplog.text
 
 
 @pytest.mark.unit
@@ -237,8 +236,9 @@ def test_run_job_failure_marker_preserves_pod_when_on_failure_false(
     fake_popen: Any,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
     _freeze_time(monkeypatch)
     fake_popen(returncode_val=0)
     _enqueue_runpodctl_happy_path(fake_subprocess)
@@ -249,8 +249,7 @@ def test_run_job_failure_marker_preserves_pod_when_on_failure_false(
     with pytest.raises(RuntimeError, match="failure marker"):
         run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
 
-    err = capsys.readouterr().err
-    assert "[warn] pod preserved" in err
+    assert "[warn] pod preserved" in caplog.text
     stop_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "stop"]]
     assert stop_calls == []
 

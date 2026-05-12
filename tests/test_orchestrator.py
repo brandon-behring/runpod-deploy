@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -10,8 +11,9 @@ from runpod_deploy.orchestrator import run_job
 
 @pytest.mark.smoke
 def test_offline_dry_run_walks_command_shape(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
     config = tmp_path / "job.yaml"
     config.write_text("""
@@ -57,10 +59,9 @@ stop:
 
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
 
-    out = capsys.readouterr().out
-    assert "runpodctl pod create" in out
-    assert "--ports 22/tcp" in out
-    assert "rsync-push:repo" in out
-    assert "ssh-detached" in out
-    assert "dry-run" in out
-    assert "runpodctl pod stop" in out
+    assert "runpodctl pod create" in caplog.text
+    assert "--ports 22/tcp" in caplog.text
+    assert "rsync-push:repo" in caplog.text
+    assert "ssh-detached" in caplog.text
+    assert "dry-run" in caplog.text
+    assert "runpodctl pod stop" in caplog.text

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -228,16 +229,16 @@ def test_stop_pod_calls_runpodctl_and_deletes_state_file(
 def test_stop_pod_warns_but_does_not_raise_on_failure(
     fake_subprocess: FakeSubprocess,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
     state_file = tmp_path / "state.json"
     state_file.write_text("{}")
     fake_subprocess.enqueue(FakeResult(returncode=2, stderr="not found"))
 
     stop_pod("pod-xyz", dry_run=False, state_file=state_file)
 
-    out = capsys.readouterr().out
-    assert "[warn] failed to stop pod pod-xyz" in out
+    assert "[warn] failed to stop pod pod-xyz" in caplog.text
     assert state_file.exists()
 
 

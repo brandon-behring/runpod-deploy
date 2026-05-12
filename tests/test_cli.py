@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -36,17 +37,17 @@ run:
 
 
 @pytest.mark.unit
-def test_validate_ok(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_validate_ok(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
     config = _write_minimal_config(tmp_path / "job.yaml")
 
     rc = main(["validate", "--config", str(config)])
 
     assert rc == 0
-    out = capsys.readouterr().out
-    assert out.startswith("ok: ")
-    assert "schema_version=1" in out
-    assert "job=demo" in out
+    assert "ok: " in caplog.text
+    assert "schema_version=1" in caplog.text
+    assert "job=demo" in caplog.text
 
 
 @pytest.mark.unit
@@ -59,8 +60,9 @@ def test_validate_check_local_reports_missing_path(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_run_offline_dry_run_walks_command_shape(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
     config = _write_minimal_config(
         tmp_path / "job.yaml",
@@ -79,16 +81,16 @@ artifacts:
     rc = main(["run", "--config", str(config), "--offline-dry-run"])
 
     assert rc == 0
-    out = capsys.readouterr().out
-    assert "runpodctl pod create" in out
-    assert "--gpu-id 'NVIDIA A100-SXM4-80GB'" in out
-    assert "rsync-push:repo" in out
-    assert "ssh-detached" in out
-    assert "runpodctl pod stop" in out
+    assert "runpodctl pod create" in caplog.text
+    assert "--gpu-id 'NVIDIA A100-SXM4-80GB'" in caplog.text
+    assert "rsync-push:repo" in caplog.text
+    assert "ssh-detached" in caplog.text
+    assert "runpodctl pod stop" in caplog.text
 
 
 @pytest.mark.unit
-def test_run_cost_cap_override_applies(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_run_cost_cap_override_applies(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
     config = _write_minimal_config(tmp_path / "job.yaml")
 
@@ -104,4 +106,4 @@ def test_run_cost_cap_override_applies(tmp_path: Path, capsys: pytest.CaptureFix
     )
 
     assert rc == 0
-    assert "cap=$0.25" in capsys.readouterr().out
+    assert "cap=$0.25" in caplog.text

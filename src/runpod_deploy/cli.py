@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
@@ -14,9 +16,32 @@ from runpod_deploy.provider import stop_pod
 
 __all__ = ["main"]
 
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging() -> None:
+    """Route runpod_deploy INFO to stdout and WARNING/ERROR to stderr."""
+    root = logging.getLogger("runpod_deploy")
+    if root.handlers and not all(isinstance(h, logging.NullHandler) for h in root.handlers):
+        return
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.NullHandler):
+            root.removeHandler(handler)
+    root.setLevel(logging.INFO)
+    info_handler = logging.StreamHandler(sys.stdout)
+    info_handler.setLevel(logging.INFO)
+    info_handler.addFilter(lambda record: record.levelno < logging.WARNING)
+    info_handler.setFormatter(logging.Formatter("%(message)s"))
+    warn_handler = logging.StreamHandler(sys.stderr)
+    warn_handler.setLevel(logging.WARNING)
+    warn_handler.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(info_handler)
+    root.addHandler(warn_handler)
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point."""
+    _configure_logging()
     parser = argparse.ArgumentParser(description="Config-driven RunPod deployment.")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -45,7 +70,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ctx = build_job_context(spec, args.config)
         if args.check_local:
             validate_local_paths(ctx)
-        print(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
+        logger.info(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
         return 0
     if args.command == "run":
         spec = load_job_spec(args.config)

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import shlex
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-__all__ = ["RemoteRunError", "RemoteRunner", "RsyncTransfer", "rsync_argv"]
+__all__ = ["RemoteRunError", "RemoteRunner", "RsyncTransfer", "log_cmd", "rsync_argv"]
+
+logger = logging.getLogger(__name__)
 
 
 class RemoteRunError(RuntimeError):
@@ -74,7 +77,7 @@ class RemoteRunner:
         if not command:
             raise ValueError("command must be non-empty")
         argv = self.ssh_argv(command)
-        print_cmd("ssh", argv)
+        log_cmd(logger, "ssh", argv)
         if self.dry_run:
             return subprocess.CompletedProcess(argv, 0, "", "")
         result = subprocess.run(
@@ -92,7 +95,7 @@ class RemoteRunner:
         if not command:
             raise ValueError("command must be non-empty")
         argv = self.ssh_argv(command, detached=True)
-        print_cmd("ssh-detached", argv)
+        log_cmd(logger, "ssh-detached", argv)
         if self.dry_run:
             return
         proc = subprocess.Popen(
@@ -131,7 +134,7 @@ class RemoteRunner:
             excludes=transfer.excludes,
             delete=transfer.delete,
         )
-        print_cmd(f"rsync-push:{transfer.label}", argv)
+        log_cmd(logger, f"rsync-push:{transfer.label}", argv)
         if self.dry_run:
             return
         subprocess.run(argv, check=True, timeout=timeout_sec)
@@ -154,7 +157,7 @@ class RemoteRunner:
             excludes=excludes,
             delete=delete,
         )
-        print_cmd("rsync-pull", argv)
+        log_cmd(logger, "rsync-pull", argv)
         if self.dry_run:
             return
         local_path.mkdir(parents=True, exist_ok=True)
@@ -189,7 +192,7 @@ def rsync_argv(
     return argv
 
 
-def print_cmd(label: str, argv: list[Any]) -> None:
-    """Print a shell-rendered argv."""
+def log_cmd(target: logging.Logger, label: str, argv: list[Any]) -> None:
+    """Emit a shell-readable argv at INFO on the given logger."""
     rendered = " ".join(shlex.quote(str(part)) for part in argv)
-    print(f"$ [{label}] {rendered}", flush=True)
+    target.info(f"$ [{label}] {rendered}")

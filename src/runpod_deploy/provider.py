@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import time
 from collections.abc import Sequence
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from runpod_deploy.config import STORAGE_EPHEMERAL, STORAGE_NETWORK_VOLUME, JobContext
-from runpod_deploy.transport import print_cmd
+from runpod_deploy.transport import log_cmd
 
 __all__ = [
     "PodConnection",
@@ -22,6 +23,8 @@ __all__ = [
     "stop_pod",
     "wait_for_pod_ready",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +134,7 @@ def provision_pod(
 ) -> PodConnection:
     """Provision a pod and return SSH connection details."""
     argv = build_pod_create_argv(ctx, volume_id=volume_id, gpu_id=gpu_id)
-    print_cmd("runpodctl", argv)
+    log_cmd(logger, "runpodctl", argv)
     if dry_run:
         return PodConnection(pod_id="<pod-id>", host="203.0.113.10", port=22022, gpu_id=gpu_id)
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
@@ -165,7 +168,7 @@ def wait_for_pod_ready(pod_id: str, ctx: JobContext, *, gpu_id: str) -> PodConne
             port_raw = ssh_info.get("port")
             port = int(port_raw or 0)
             if status == "RUNNING" and host and port:
-                print(f"[pod] {pod_id} RUNNING ssh={host}:{port} gpu={gpu_id}", flush=True)
+                logger.info(f"[pod] {pod_id} RUNNING ssh={host}:{port} gpu={gpu_id}")
                 return PodConnection(pod_id=pod_id, host=host, port=port, gpu_id=gpu_id)
         time.sleep(5)
     raise RuntimeError(f"pod {pod_id} did not become SSH-ready; last={last_payload}")
@@ -174,14 +177,13 @@ def wait_for_pod_ready(pod_id: str, ctx: JobContext, *, gpu_id: str) -> PodConne
 def stop_pod(pod_id: str, *, dry_run: bool, state_file: Path | None = None) -> None:
     """Stop a RunPod pod and optionally clear its state file."""
     argv = ["runpodctl", "pod", "stop", pod_id]
-    print_cmd("runpodctl", argv)
+    log_cmd(logger, "runpodctl", argv)
     if dry_run or pod_id == "<pod-id>":
         return
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        print(
-            f"[warn] failed to stop pod {pod_id}: stdout={result.stdout} stderr={result.stderr}",
-            flush=True,
+        logger.warning(
+            f"[warn] failed to stop pod {pod_id}: stdout={result.stdout} stderr={result.stderr}"
         )
     elif state_file is not None:
         state_file.unlink(missing_ok=True)
@@ -189,7 +191,7 @@ def stop_pod(pod_id: str, *, dry_run: bool, state_file: Path | None = None) -> N
 
 def run_json(argv: list[str]) -> Any:
     """Run a local command and parse JSON."""
-    print_cmd("local", argv)
+    log_cmd(logger, "local", argv)
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(

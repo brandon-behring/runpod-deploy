@@ -1,5 +1,7 @@
 """Config-driven RunPod orchestration."""
 
+import logging
+
 from runpod_deploy.config import (
     ArtifactPullSpec,
     BudgetSpec,
@@ -45,3 +47,5 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
