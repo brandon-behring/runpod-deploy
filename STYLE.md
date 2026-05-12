@@ -1,58 +1,52 @@
-# runpod-deploy Coding Standards
+# runpod-deploy — Coding Standards
 
-These standards mirror the reusable-library posture used by `eval-toolkit`,
-adapted for RunPod orchestration.
+Public-facing summary of this project's code conventions. The full
+operational standards (naming, errors, function design, output channels,
+no-go list, etc.) live in `CLAUDE.md` at the repo root and are the canonical
+source of truth.
 
-## Principles
+## Foundational principles
 
-1. **Fail fast at boundaries.** Validate YAML, CLI arguments, local required
-   paths, and subprocess inputs before resource-heavy work.
-2. **Separate pure logic from IO.** Config parsing, template rendering, argv
-   builders, and manifest builders are pure and directly tested. Subprocess,
-   SSH, rsync, and file writes stay in thin wrappers.
-3. **No project-name conditionals in core.** Project behavior belongs in
-   consumer-owned configs or future versioned hooks.
-4. **Immutability by default.** Config/value/result types are frozen slotted
+1. **Never fail silently.** Validation failures raise stdlib exceptions with
+   diagnostic messages.
+2. **Fail fast at boundaries.** YAML, CLI args, and local paths are validated
+   before resource-heavy work.
+3. **Immutability by default.** Config/value/result types are frozen slotted
    dataclasses.
-5. **No silent fallbacks.** Unknown config fields, missing required paths, and
-   unsupported storage modes raise actionable stdlib exceptions.
+4. **Pure-vs-IO separation.** Pure logic (config parsing, argv builders,
+   template rendering, manifests) is directly tested; subprocess/SSH/rsync
+   stays in thin wrappers.
+5. **Anti-overengineering.** No abstraction without a second concrete use.
 
 ## Tooling
 
 | Tool | Setting |
 |---|---|
 | Formatter | `black`, line length 100 |
-| Linter | `ruff check`, import sorting enabled, `E501` ignored because Black owns wrapping |
-| Type checker | strict `mypy` |
-| Test runner | `pytest`; live cloud tests are marked `network` and opt-in only |
+| Linter | `ruff` with `select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4"]` |
+| Type checker | `mypy` strict |
+| Test runner | `pytest` with markers `unit`, `smoke`, `network`; coverage floor 79% |
 | Build backend | `hatchling` |
 | Env manager | `uv` |
 | Python | `>=3.11` |
 
-Use `make lint`, `make test`, and `make coverage`. Do not use `ruff format`.
+Run via `make lint`, `make test`, `make coverage`. CI runs `make ci`.
 
-## API And Types
+## Public API surface
 
-- Package import name is `runpod_deploy`.
-- Console script is `runpod-deploy`.
-- Public modules declare `__all__`; private helpers are prefixed `_`.
-- Public functions are fully typed.
-- Use `@dataclass(frozen=True, slots=True)` for configs and value objects.
-- Mutable runtime wrappers are allowed only for IO/session state.
-- Prefer stdlib exceptions. `RemoteRunError` is reserved for remote job failure
-  markers and failed remote execution semantics.
-
-## Tests
-
-- Test public contracts first: config validation, CLI dry-runs, `runpodctl`
-  argv, SSH/rsync argv, GPU selection, monitor failure markers, stop policy,
-  and manifests.
-- Default tests never provision a real pod.
-- Every RunPod operational lesson becomes a regression test before or with the
-  implementation that preserves it.
+- Package import name: `runpod_deploy`
+- Console script: `runpod-deploy`
+- Every module declares `__all__`; private helpers are `_`-prefixed.
+- `py.typed` marker ships with the package.
 
 ## Security
 
-- No secrets in configs, examples, tests, logs, docs, or manifests.
-- Configs may reference remote secret files such as `/workspace/secrets/env`;
-  they must not contain token values.
+No secrets in configs, examples, tests, logs, docs, or manifests. Configs may
+reference remote secret files (e.g., `/workspace/secrets/env`); they must not
+contain token values.
+
+## Full standards
+
+See `CLAUDE.md` in the repository for the complete coding standards,
+including naming conventions, error-handling rules, the no-go list, the
+single custom-exception carve-out, and the operational addendum.
