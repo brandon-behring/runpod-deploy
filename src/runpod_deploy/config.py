@@ -329,6 +329,13 @@ def build_job_context(
     run_id = stamp.strftime(f"{spec.run_id_prefix}-%Y%m%dT%H%M%SZ")
     config_dir = config.parent
     project_root = resolve_relative_path(spec.local.project_root, base=config_dir)
+    if project_root == Path.home():
+        raise ValueError(
+            f"project_root resolved to $HOME ({project_root}); this would stage your entire "
+            "home directory. Check local.project_root in the config — for a YAML that lives "
+            "inside the consumer repo, the typical value is '../..' (one level up from "
+            "configs/runpod/), not '../../..'."
+        )
     run_dir = project_root / "artifacts" / "runpod" / stamp.strftime("%Y%m%dT%H%M%SZ")
     variables: dict[str, str] = {
         "config_dir": str(config_dir),

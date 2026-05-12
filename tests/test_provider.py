@@ -43,6 +43,33 @@ def test_select_gpu_fails_closed_on_unconfigured_available_gpu() -> None:
 
 
 @pytest.mark.unit
+def test_select_gpu_error_suggests_available_alternatives() -> None:
+    with pytest.raises(RuntimeError, match=r"consider switching gpu_order") as excinfo:
+        select_gpu_for_datacenter(
+            [
+                {
+                    "id": "US-MD-1",
+                    "gpuAvailability": [
+                        {"gpuId": "NVIDIA H100 80GB HBM3", "stockStatus": "Medium"},
+                        {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "Low"},
+                        {"gpuId": "NVIDIA H200 NVL", "stockStatus": ""},
+                    ],
+                }
+            ],
+            datacenter_id="US-MD-1",
+            gpu_order=("NVIDIA H100 PCIe",),
+        )
+
+    consider_block = str(excinfo.value).split("consider switching", 1)[1]
+    assert "NVIDIA H100 80GB HBM3 (Medium)" in consider_block
+    assert "NVIDIA A100-SXM4-80GB (Low)" in consider_block
+    # H200 NVL has empty stockStatus → should not appear in the consider list
+    assert "H200 NVL" not in consider_block
+    # Medium-tier should be listed before Low-tier inside the consider block
+    assert consider_block.index("Medium") < consider_block.index("Low")
+
+
+@pytest.mark.unit
 def test_resolve_volume_enforces_datacenter() -> None:
     with pytest.raises(RuntimeError, match="expected EU-RO-1"):
         resolve_volume(
