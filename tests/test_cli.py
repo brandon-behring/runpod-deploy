@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from runpod_deploy.cli import main
+from tests.conftest import FakeResult, FakeSubprocess
 
 
 def _write_minimal_config(path: Path, *, extra: str = "") -> Path:
@@ -144,3 +147,96 @@ def test_run_cost_cap_override_applies(tmp_path: Path, caplog: pytest.LogCapture
 
     assert rc == 0
     assert "cap=$0.25" in caplog.text
+
+
+# ---------- logs subcommand ----------
+
+
+def _write_logs_fixture_config(tmp_path: Path) -> tuple[Path, Path]:
+    """Write a config + matching state file. Returns (config, state_file)."""
+    state_file = tmp_path / "state.json"
+    config = tmp_path / "job.yaml"
+    config.write_text(f"""
+schema_version: 1
+name: demo
+run_id_prefix: demo
+state_file: {state_file}
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: US-MD-1
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+""")
+    state_file.write_text(json.dumps({"pod_id": "pod-xyz"}))
+    return config, state_file
+
+
+@pytest.mark.unit
+def test_logs_streams_tail_with_follow_by_default(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _ = _write_logs_fixture_config(tmp_path)
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {"ip": "5.6.7.8", "port": 22033}})
+        ),
+        FakeResult(returncode=0),
+    )
+    captured: dict[str, Any] = {}
+
+    def _spy(self: Any, command: str) -> int:
+        captured["command"] = command
+        return 0
+
+    monkeypatch.setattr("runpod_deploy.cli.RemoteRunner.ssh_stream", _spy)
+
+    rc = main(["logs", "--config", str(config)])
+
+    assert rc == 0
+    assert captured["command"] == "tail -n 200 -f /workspace/demo.log"
+
+
+@pytest.mark.unit
+def test_logs_no_follow_omits_f_flag(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, _ = _write_logs_fixture_config(tmp_path)
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {"ip": "5.6.7.8", "port": 22033}})
+        ),
+    )
+    captured: dict[str, Any] = {}
+
+    def _spy(self: Any, command: str) -> int:
+        captured["command"] = command
+        return 0
+
+    monkeypatch.setattr("runpod_deploy.cli.RemoteRunner.ssh_stream", _spy)
+
+    rc = main(["logs", "--config", str(config), "--no-follow", "--lines", "50"])
+
+    assert rc == 0
+    assert captured["command"] == "tail -n 50 /workspace/demo.log"
+
+
+@pytest.mark.unit
+def test_logs_raises_when_state_file_missing(tmp_path: Path) -> None:
+    config, state_file = _write_logs_fixture_config(tmp_path)
+    state_file.unlink()
+
+    with pytest.raises(FileNotFoundError, match="state file not found"):
+        main(["logs", "--config", str(config)])

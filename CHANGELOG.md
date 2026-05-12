@@ -10,6 +10,14 @@ This project follows Semantic Versioning.
   the log level to `DEBUG` and surfaces a handful of new debug records
   (rsync source/dest, ssh return codes, JSON payload types). `--quiet`
   lowers it to `WARNING` so info chatter is suppressed.
+- `runpod-deploy logs --config <path>` — live-tail the current pod's run
+  log over SSH. Discovers the pod's host/port from `runpodctl pod get`
+  using the pod id persisted in the config's state file. Supports
+  `--lines N` (default 200) and `--no-follow` (print and exit instead of
+  `tail -f`).
+- `transport.RemoteRunner.ssh_stream(command)` — runs a remote command
+  with stdout/stderr inherited from the parent process. Used by the new
+  `logs` subcommand to stream `tail -f` output in real time.
 
 ### Changed
 

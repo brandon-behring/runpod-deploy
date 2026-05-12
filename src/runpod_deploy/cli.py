@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
@@ -12,7 +13,8 @@ from pathlib import Path
 
 from runpod_deploy.config import build_job_context, load_job_spec, validate_local_paths
 from runpod_deploy.orchestrator import run_job
-from runpod_deploy.provider import stop_pod
+from runpod_deploy.provider import run_json, stop_pod
+from runpod_deploy.transport import RemoteRunner
 
 __all__ = ["main"]
 
@@ -80,6 +82,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     stop_parser.add_argument("--state-file", type=Path, required=True)
     stop_parser.add_argument("--dry-run", action="store_true")
 
+    logs_parser = sub.add_parser(
+        "logs", parents=[verbosity], help="Live-tail the current pod's run log."
+    )
+    logs_parser.add_argument("--config", type=Path, required=True)
+    logs_parser.add_argument(
+        "--lines", type=int, default=200, help="Initial lines to show (default 200)."
+    )
+    logs_parser.add_argument(
+        "--no-follow", action="store_true", help="Print last N lines and exit."
+    )
+
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))
     if args.command == "validate":
@@ -117,6 +130,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise RuntimeError(f"state file has no pod id: {args.state_file}")
         stop_pod(pod_id, dry_run=bool(args.dry_run), state_file=args.state_file)
         return 0
+    if args.command == "logs":
+        spec = load_job_spec(args.config)
+        state_file = spec.resolved_state_file
+        if not state_file.exists():
+            raise FileNotFoundError(f"state file not found: {state_file}")
+        state = json.loads(state_file.read_text())
+        pod_id = str(state.get("pod_id") or "")
+        if not pod_id:
+            raise RuntimeError(f"state file has no pod_id: {state_file}")
+        payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"])
+        ssh_info_raw = payload.get("ssh") if isinstance(payload, dict) else None
+        ssh_info = ssh_info_raw if isinstance(ssh_info_raw, dict) else {}
+        host = str(ssh_info.get("ip") or "")
+        port = int(ssh_info.get("port") or 0)
+        if not host or not port:
+            raise RuntimeError(f"pod {pod_id} has no SSH info; payload={payload!r}")
+        ctx = build_job_context(spec, args.config)
+        log_path = ctx.render(spec.run.log_path)
+        runner = RemoteRunner(host=host, port=port, ssh_key=spec.ssh.resolved_key_path)
+        cmd = f"tail -n {args.lines}"
+        if not args.no_follow:
+            cmd += " -f"
+        cmd += f" {shlex.quote(log_path)}"
+        return runner.ssh_stream(cmd)
     raise RuntimeError(f"unsupported command: {args.command}")
 
 

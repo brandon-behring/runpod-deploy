@@ -81,6 +81,51 @@ def test_ssh_exec_dry_run_skips_subprocess(fake_subprocess: FakeSubprocess, tmp_
     assert fake_subprocess.calls == []
 
 
+# ---------- ssh_stream ----------
+
+
+@pytest.mark.unit
+def test_ssh_stream_invokes_subprocess_run_without_capture(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    rc = _runner(tmp_path).ssh_stream("tail -f /workspace/log")
+
+    assert rc == 0
+    argv = fake_subprocess.calls[0]
+    assert argv[:2] == ["ssh", "-p"]
+    assert "root@1.2.3.4" in argv
+    assert argv[-1] == "tail -f /workspace/log"
+
+
+@pytest.mark.unit
+def test_ssh_stream_returns_remote_returncode(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=130))  # 130 = Ctrl+C exit
+
+    rc = _runner(tmp_path).ssh_stream("tail -f /tmp/x")
+
+    assert rc == 130
+
+
+@pytest.mark.unit
+def test_ssh_stream_rejects_empty_command(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="command must be non-empty"):
+        _runner(tmp_path).ssh_stream("")
+
+
+@pytest.mark.unit
+def test_ssh_stream_dry_run_skips_subprocess(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    rc = _runner(tmp_path, dry_run=True).ssh_stream("tail -f /tmp/x")
+
+    assert rc == 0
+    assert fake_subprocess.calls == []
+
+
 # ---------- ssh_exec_detached ----------
 
 

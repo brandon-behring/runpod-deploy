@@ -91,6 +91,16 @@ class RemoteRunner:
             )
         return result
 
+    def ssh_stream(self, command: str) -> int:
+        """Run a remote command with stdout/stderr streamed live to the parent terminal."""
+        if not command:
+            raise ValueError("command must be non-empty")
+        argv = self.ssh_argv(command)
+        log_cmd(logger, "ssh-stream", argv)
+        if self.dry_run:
+            return 0
+        return subprocess.run(argv, check=False).returncode
+
     def ssh_exec_detached(self, command: str, *, timeout_sec: int = 30) -> None:
         """Launch one remote command via `ssh -f -n -T`."""
         if not command:

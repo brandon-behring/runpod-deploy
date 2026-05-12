@@ -12,6 +12,8 @@ uv pip install -e ".[dev]"
 
 runpod-deploy validate --config examples/smoke/a4000_smoke.yaml
 runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
+runpod-deploy logs --config examples/smoke/a4000_smoke.yaml         # live-tail the active pod's run log
+runpod-deploy stop --state-file ~/.runpod-smoke-current              # stop the active pod
 ```
 
 Optional: enable pre-commit hooks (`pip install pre-commit && pre-commit
