@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -21,18 +21,34 @@ class FakeResult:
 
 @dataclass
 class FakeSubprocess:
-    """Captures subprocess.run calls and serves FakeResults from a FIFO queue."""
+    """Captures subprocess.run calls; serves results from predicates first, FIFO second."""
 
     calls: list[list[str]] = field(default_factory=list)
     responses: list[FakeResult] = field(default_factory=list)
+    matchers: list[tuple[Callable[[list[str]], bool], FakeResult]] = field(default_factory=list)
 
     def enqueue(self, *results: FakeResult) -> None:
         self.responses.extend(results)
 
+    def when(self, predicate: Callable[[list[str]], bool], result: FakeResult) -> None:
+        """Register a predicate-based responder. Matchers take precedence over the FIFO queue."""
+        self.matchers.append((predicate, result))
+
     def __call__(self, argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
-        self.calls.append(list(argv))
-        result = self.responses.pop(0) if self.responses else FakeResult()
+        argv_list = list(argv)
+        self.calls.append(argv_list)
+        result = self._pick_result(argv_list)
+        if kwargs.get("check") and result.returncode != 0:
+            raise subprocess.CalledProcessError(
+                result.returncode, argv, output=result.stdout, stderr=result.stderr
+            )
         return subprocess.CompletedProcess(argv, result.returncode, result.stdout, result.stderr)
+
+    def _pick_result(self, argv: list[str]) -> FakeResult:
+        for predicate, result in self.matchers:
+            if predicate(argv):
+                return result
+        return self.responses.pop(0) if self.responses else FakeResult()
 
 
 @pytest.fixture
