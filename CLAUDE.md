@@ -42,6 +42,10 @@ Run via `make lint` (= `ruff check + black --check + mypy`), `make test`, and
 `make coverage`. CI runs `make ci` (= all three). Do not use `ruff format` —
 Black owns formatting.
 
+Optional commit-time guard: `.pre-commit-config.yaml` runs ruff + black + file
+hygiene at `git commit` time when contributors opt in via `pre-commit install`.
+`make lint` is still the canonical enforcement path (and is the one CI runs).
+
 ## 3. Naming
 
 - **Modules**: `snake_case`, lowercase package name `runpod_deploy`.

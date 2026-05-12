@@ -14,6 +14,9 @@ runpod-deploy validate --config examples/smoke/a4000_smoke.yaml
 runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
 ```
 
+Optional: enable pre-commit hooks (`pip install pre-commit && pre-commit
+install`). `make lint` remains the canonical enforcement path; CI runs it.
+
 `--offline-dry-run` prints the provision/stage/launch/pull/stop command shape
 without calling `runpodctl`, SSH, or rsync. For a real end-to-end deploy on a
 cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it walks
