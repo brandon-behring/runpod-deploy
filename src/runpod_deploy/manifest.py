@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from runpod_deploy.config import JobContext
+from runpod_deploy.config import ArtifactPullSpec, JobContext
 from runpod_deploy.provider import PodConnection
 
 __all__ = ["build_pull_manifest", "write_pull_manifest"]
@@ -37,7 +36,18 @@ def build_pull_manifest(
         "volume_mount": ctx.spec.storage.volume_mount,
         "volume_name": ctx.spec.storage.volume_name,
         "volume_gb": ctx.spec.storage.volume_gb,
-        "artifacts": [asdict(artifact) for artifact in ctx.spec.artifacts],
+        "artifacts": [_render_artifact(ctx, artifact) for artifact in ctx.spec.artifacts],
+    }
+
+
+def _render_artifact(ctx: JobContext, artifact: ArtifactPullSpec) -> dict[str, Any]:
+    return {
+        "label": artifact.label,
+        "remote_path": ctx.render(artifact.remote_path),
+        "local_path": ctx.render(artifact.local_path),
+        "required": artifact.required,
+        "excludes": [ctx.render(pattern) for pattern in artifact.excludes],
+        "delete": artifact.delete,
     }
 
 

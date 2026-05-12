@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shlex
 import sys
 import time
@@ -42,29 +43,8 @@ def run_job(
     ctx = build_job_context(spec, config_path)
     validate_local_paths(ctx)
     _print_budget(spec)
-    volume_id: str | None = None
-    if offline_dry_run and spec.storage.mode == STORAGE_NETWORK_VOLUME:
-        volume_id = "<volume-id>"
-    elif spec.storage.mode == STORAGE_NETWORK_VOLUME:
-        volumes = run_json(["runpodctl", "network-volume", "list", "-o", "json"], dry_run=False)
-        volume_name = spec.storage.volume_name
-        if volume_name is None:
-            raise ValueError("storage.volume_name is required for network_volume storage")
-        volume_id, _ = resolve_volume(
-            volumes,
-            volume_name=volume_name,
-            expected_datacenter_id=spec.pod.datacenter_id,
-        )
-
-    if offline_dry_run:
-        datacenters = run_json(["runpodctl", "datacenter", "list", "-o", "json"], dry_run=True)
-    else:
-        datacenters = run_json(["runpodctl", "datacenter", "list", "-o", "json"], dry_run=False)
-    gpu_id = select_gpu_for_datacenter(
-        datacenters,
-        datacenter_id=spec.pod.datacenter_id,
-        gpu_order=spec.pod.gpu_order,
-    )
+    volume_id = _resolve_volume_id(spec, offline=offline_dry_run)
+    gpu_id = _resolve_gpu_id(spec, offline=offline_dry_run)
     pod = provision_pod(ctx, volume_id=volume_id, gpu_id=gpu_id, dry_run=dry_run)
     runner = RemoteRunner(
         host=pod.host,
@@ -84,10 +64,8 @@ def run_job(
     except Exception:
         failed = True
         if not dry_run:
-            try:
+            with contextlib.suppress(Exception):
                 _pull_artifacts(runner, ctx, failed=True, pod=pod)
-            except Exception as pull_exc:
-                print(f"[warn] failed to pull failure artifacts: {pull_exc}", file=sys.stderr)
         raise
     finally:
         should_stop = spec.stop.on_failure if failed else spec.stop.on_success
@@ -95,6 +73,36 @@ def run_job(
             stop_pod(pod.pod_id, dry_run=dry_run, state_file=spec.resolved_state_file)
         elif not dry_run:
             print(f"[warn] pod preserved: {pod.pod_id}", file=sys.stderr)
+
+
+def _resolve_volume_id(spec: RunpodJobSpec, *, offline: bool) -> str | None:
+    """Resolve the RunPod network-volume id, or None for ephemeral storage."""
+    if spec.storage.mode != STORAGE_NETWORK_VOLUME:
+        return None
+    if offline:
+        return "<volume-id>"
+    volume_name = spec.storage.volume_name
+    if volume_name is None:
+        raise ValueError("storage.volume_name is required for network_volume storage")
+    volumes = run_json(["runpodctl", "network-volume", "list", "-o", "json"])
+    volume_id, _ = resolve_volume(
+        volumes,
+        volume_name=volume_name,
+        expected_datacenter_id=spec.pod.datacenter_id,
+    )
+    return volume_id
+
+
+def _resolve_gpu_id(spec: RunpodJobSpec, *, offline: bool) -> str:
+    """Pick the GPU id for provisioning, falling back to the first preference offline."""
+    if offline:
+        return spec.pod.gpu_order[0]
+    datacenters = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
+    return select_gpu_for_datacenter(
+        datacenters,
+        datacenter_id=spec.pod.datacenter_id,
+        gpu_order=spec.pod.gpu_order,
+    )
 
 
 def _print_budget(spec: RunpodJobSpec) -> None:

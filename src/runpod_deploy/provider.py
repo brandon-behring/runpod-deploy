@@ -155,7 +155,7 @@ def wait_for_pod_ready(pod_id: str, ctx: JobContext, *, gpu_id: str) -> PodConne
     deadline = time.time() + 240
     last_payload: dict[str, object] = {}
     while time.time() < deadline:
-        payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"], dry_run=False)
+        payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"])
         if isinstance(payload, dict):
             last_payload = payload
             status = payload.get("desiredStatus") or payload.get("status")
@@ -187,38 +187,12 @@ def stop_pod(pod_id: str, *, dry_run: bool, state_file: Path | None = None) -> N
         state_file.unlink(missing_ok=True)
 
 
-def run_json(argv: list[str], *, dry_run: bool) -> Any:
+def run_json(argv: list[str]) -> Any:
     """Run a local command and parse JSON."""
     print_cmd("local", argv)
-    if dry_run:
-        return _offline_json(argv)
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         raise RuntimeError(
             f"command failed: {argv}\nstdout={result.stdout}\nstderr={result.stderr}"
         )
     return json.loads(result.stdout)
-
-
-def _offline_json(argv: list[str]) -> Any:
-    if "network-volume" in argv:
-        return [{"name": "pid-workspace-100gb", "id": "<volume-id>", "dataCenterId": "EU-RO-1"}]
-    if "datacenter" in argv:
-        return [
-            {
-                "id": "EU-RO-1",
-                "gpuAvailability": [
-                    {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "Low"},
-                    {"gpuId": "NVIDIA A100 80GB PCIe", "stockStatus": "Low"},
-                ],
-            },
-            {
-                "id": "US-MD-1",
-                "gpuAvailability": [
-                    {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "Low"},
-                    {"gpuId": "NVIDIA H100 80GB HBM3", "stockStatus": "Low"},
-                    {"gpuId": "NVIDIA H200", "stockStatus": "Low"},
-                ],
-            },
-        ]
-    return {}

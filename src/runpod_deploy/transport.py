@@ -178,7 +178,6 @@ def rsync_argv(
         "--no-group",
         "--no-perms",
         "--omit-dir-times",
-        "--info=progress2",
         "-e",
         f"ssh -p {port} -i {shlex.quote(str(ssh_key))} -o StrictHostKeyChecking=accept-new",
     ]

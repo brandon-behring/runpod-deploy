@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from runpod_deploy.config import build_job_context, load_job_spec, validate_local_paths
@@ -49,15 +50,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run":
         spec = load_job_spec(args.config)
         if args.cost_cap_usd is not None:
-            from dataclasses import replace
-
             spec = replace(
                 spec,
                 budget=replace(spec.budget, cost_cap_usd=float(args.cost_cap_usd)),
             )
         if args.max_runtime_minutes is not None:
-            from dataclasses import replace
-
             spec = replace(
                 spec,
                 budget=replace(spec.budget, max_runtime_minutes=int(args.max_runtime_minutes)),
