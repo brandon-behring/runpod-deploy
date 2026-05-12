@@ -89,6 +89,43 @@ artifacts:
 
 
 @pytest.mark.unit
+def test_quiet_flag_suppresses_info_output(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = _write_minimal_config(tmp_path / "job.yaml")
+
+    rc = main(["validate", "--quiet", "--config", str(config)])
+
+    assert rc == 0
+    info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert info_records == []
+
+
+@pytest.mark.unit
+def test_verbose_flag_enables_debug_output(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = _write_minimal_config(
+        tmp_path / "job.yaml",
+        extra="""staging:
+  - label: repo
+    source: "{project_root}/"
+    destination: "/workspace/demo/"
+""",
+    )
+
+    rc = main(["run", "--verbose", "--config", str(config), "--offline-dry-run"])
+
+    assert rc == 0
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("rsync-push" in r.getMessage() for r in debug_records)
+
+
+@pytest.mark.unit
 def test_run_cost_cap_override_applies(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO, logger="runpod_deploy")
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")

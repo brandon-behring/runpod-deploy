@@ -19,17 +19,19 @@ __all__ = ["main"]
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging() -> None:
-    """Route runpod_deploy INFO to stdout and WARNING/ERROR to stderr."""
+def _configure_logging(level: int = logging.INFO) -> None:
+    """Route runpod_deploy DEBUG/INFO to stdout and WARNING/ERROR to stderr."""
     root = logging.getLogger("runpod_deploy")
-    if root.handlers and not all(isinstance(h, logging.NullHandler) for h in root.handlers):
-        return
     for handler in list(root.handlers):
         if isinstance(handler, logging.NullHandler):
             root.removeHandler(handler)
-    root.setLevel(logging.INFO)
+    root.setLevel(level)
+    if any(not isinstance(h, logging.NullHandler) for h in root.handlers):
+        for handler in root.handlers:
+            handler.setLevel(level if handler.stream is sys.stdout else logging.WARNING)
+        return
     info_handler = logging.StreamHandler(sys.stdout)
-    info_handler.setLevel(logging.INFO)
+    info_handler.setLevel(level)
     info_handler.addFilter(lambda record: record.levelno < logging.WARNING)
     info_handler.setFormatter(logging.Formatter("%(message)s"))
     warn_handler = logging.StreamHandler(sys.stderr)
@@ -39,13 +41,32 @@ def _configure_logging() -> None:
     root.addHandler(warn_handler)
 
 
+def _verbosity_parser() -> argparse.ArgumentParser:
+    """Parent parser supplying --verbose/--quiet to every subcommand."""
+    parent = argparse.ArgumentParser(add_help=False)
+    group = parent.add_mutually_exclusive_group()
+    group.add_argument("--verbose", "-v", action="store_true", help="Show DEBUG output.")
+    group.add_argument(
+        "--quiet", "-q", action="store_true", help="Suppress INFO; show only warnings/errors."
+    )
+    return parent
+
+
+def _level_from_args(args: argparse.Namespace) -> int:
+    if getattr(args, "verbose", False):
+        return logging.DEBUG
+    if getattr(args, "quiet", False):
+        return logging.WARNING
+    return logging.INFO
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point."""
-    _configure_logging()
+    verbosity = _verbosity_parser()
     parser = argparse.ArgumentParser(description="Config-driven RunPod deployment.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    validate_parser = sub.add_parser("validate", help="Validate a job config.")
+    validate_parser = sub.add_parser("validate", parents=[verbosity], help="Validate a job config.")
     validate_parser.add_argument("--config", type=Path, required=True)
     validate_parser.add_argument(
         "--check-local",
@@ -53,18 +74,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Also validate local required_paths against the current filesystem.",
     )
 
-    run_parser = sub.add_parser("run", help="Run a job config.")
+    run_parser = sub.add_parser("run", parents=[verbosity], help="Run a job config.")
     run_parser.add_argument("--config", type=Path, required=True)
     run_parser.add_argument("--dry-run", action="store_true")
     run_parser.add_argument("--offline-dry-run", action="store_true")
     run_parser.add_argument("--cost-cap-usd", type=float, default=None)
     run_parser.add_argument("--max-runtime-minutes", type=int, default=None)
 
-    stop_parser = sub.add_parser("stop", help="Stop a pod from a state file.")
+    stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
     stop_parser.add_argument("--state-file", type=Path, required=True)
     stop_parser.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
+    _configure_logging(_level_from_args(args))
     if args.command == "validate":
         spec = load_job_spec(args.config)
         ctx = build_job_context(spec, args.config)

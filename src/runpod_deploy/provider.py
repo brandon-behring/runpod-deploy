@@ -197,4 +197,6 @@ def run_json(argv: list[str]) -> Any:
         raise RuntimeError(
             f"command failed: {argv}\nstdout={result.stdout}\nstderr={result.stderr}"
         )
-    return json.loads(result.stdout)
+    payload = json.loads(result.stdout)
+    logger.debug(f"[local] argv={argv[0]!r} payload_type={type(payload).__name__}")
+    return payload

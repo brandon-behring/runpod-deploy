@@ -83,6 +83,7 @@ class RemoteRunner:
         result = subprocess.run(
             argv, capture_output=True, text=True, timeout=timeout_sec, check=False
         )
+        logger.debug(f"[ssh] exit={result.returncode} bytes_out={len(result.stdout)}")
         if check and result.returncode != 0:
             raise RemoteRunError(
                 f"ssh command failed with exit {result.returncode}: {command}\n"
@@ -135,6 +136,10 @@ class RemoteRunner:
             delete=transfer.delete,
         )
         log_cmd(logger, f"rsync-push:{transfer.label}", argv)
+        logger.debug(
+            f"[rsync-push] src={transfer.source!r} dst={transfer.destination!r} "
+            f"excludes={transfer.excludes!r}"
+        )
         if self.dry_run:
             return
         subprocess.run(argv, check=True, timeout=timeout_sec)
@@ -158,6 +163,9 @@ class RemoteRunner:
             delete=delete,
         )
         log_cmd(logger, "rsync-pull", argv)
+        logger.debug(
+            f"[rsync-pull] src={remote_path!r} dst={str(local_path)!r} excludes={excludes!r}"
+        )
         if self.dry_run:
             return
         local_path.mkdir(parents=True, exist_ok=True)
