@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
+from runpod_deploy import preflight
 from runpod_deploy.config import build_job_context, load_job_spec, validate_local_paths
 from runpod_deploy.orchestrator import run_job
 from runpod_deploy.provider import run_json, stop_pod
@@ -60,9 +61,35 @@ def _level_from_args(args: argparse.Namespace) -> int:
 def _cmd_validate(args: argparse.Namespace) -> int:
     spec = load_job_spec(args.config)
     ctx = build_job_context(spec, args.config)
-    if args.check_local:
+    if args.all or args.check_local:
         validate_local_paths(ctx)
+    if args.all or args.check_availability:
+        preflight.check_gpu_availability(ctx)
+    if args.all or args.scan_consumer:
+        preflight.scan_consumer_pyproject(ctx)
+        preflight.scan_staged_payloads_for_absolute_paths(ctx)
     logger.info(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
+    return 0
+
+
+def _cmd_gpu_list(args: argparse.Namespace) -> int:
+    entry = preflight.fetch_datacenter_payload(args.datacenter)
+    availability = entry.get("gpuAvailability") or []
+    rows: list[tuple[str, str]] = []
+    if isinstance(availability, list):
+        for item in availability:
+            if isinstance(item, dict):
+                name = str(item.get("gpuId") or "")
+                status = str(item.get("stockStatus") or "").strip()
+                if name:
+                    rows.append((name, status or "—"))
+    tier_rank = {"high": 0, "medium": 1, "low": 2}
+    rows.sort(key=lambda row: (tier_rank.get(row[1].lower(), 99), row[0]))
+    name_width = max((len(name) for name, _ in rows), default=3)
+    logger.info(f"datacenter: {args.datacenter}")
+    logger.info(f"{'gpu':<{name_width}}  stock")
+    for name, status in rows:
+        logger.info(f"{name:<{name_width}}  {status}")
     return 0
 
 
@@ -137,6 +164,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Also validate local required_paths against the current filesystem.",
     )
+    validate_parser.add_argument(
+        "--check-availability",
+        action="store_true",
+        help="Live-query runpodctl datacenter list and verify configured GPUs.",
+    )
+    validate_parser.add_argument(
+        "--scan-consumer",
+        action="store_true",
+        help="Scan consumer pyproject.toml + staged payloads for common foot-guns.",
+    )
+    validate_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Enable every opt-in check (--check-local, --check-availability, --scan-consumer).",
+    )
 
     run_parser = sub.add_parser("run", parents=[verbosity], help="Run a job config.")
     run_parser.add_argument("--config", type=Path, required=True)
@@ -160,6 +202,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--no-follow", action="store_true", help="Print last N lines and exit."
     )
 
+    gpu_list_parser = sub.add_parser(
+        "gpu-list",
+        parents=[verbosity],
+        help="Print GPU availability for one RunPod datacenter.",
+    )
+    gpu_list_parser.add_argument("--datacenter", type=str, required=True)
+
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))
     handlers = {
@@ -167,6 +216,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "run": _cmd_run,
         "stop": _cmd_stop,
         "logs": _cmd_logs,
+        "gpu-list": _cmd_gpu_list,
     }
     return handlers[args.command](args)
 

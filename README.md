@@ -34,6 +34,38 @@ through the per-host setup (SSH key registration, rsync version) once.
 | [`research-kb/pdf_embed_gpu.yaml`](examples/research-kb/pdf_embed_gpu.yaml) | GPU-accelerated PDF embedding pipeline |
 | [`post_transformers/gpu_benchmark.yaml`](examples/post_transformers/gpu_benchmark.yaml) | post-transformers GPU benchmark workload |
 
+## Consumer-owned configs
+
+The recommended pattern is for the *consumer* repo to own its runpod-deploy
+job YAML alongside the project. The YAML lives at
+`consumer-repo/configs/runpod/*.yaml`, and `local.project_root` is set
+relative to that file's directory:
+
+```
+my-project/
+├── pyproject.toml
+├── src/...
+└── configs/
+    └── runpod/
+        └── headline.yaml          # local.project_root: ../..
+```
+
+```yaml
+# configs/runpod/headline.yaml
+local:
+  project_root: ../..   # one level for runpod/, one for configs/
+```
+
+`../..` resolves to `my-project/`, which is what gets rsynced to the pod.
+A common off-by-one — `../../..` from the same location — resolves to your
+$HOME directory and would stage the entire home tree to the pod;
+`runpod-deploy validate` (and any `run`) fails-fast in this case.
+
+The example configs under `examples/` are *not* consumer-owned — they live
+inside this repo, so they use longer paths (`../../../prompt-injection-v3`)
+to reach back to a sibling consumer repo. Don't copy that pattern when
+authoring configs *inside* your own consumer repo.
+
 ## Model
 
 Version 1 supports one job per YAML file:

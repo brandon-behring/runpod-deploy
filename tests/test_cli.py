@@ -240,3 +240,44 @@ def test_logs_raises_when_state_file_missing(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="state file not found"):
         main(["logs", "--config", str(config)])
+
+
+@pytest.mark.unit
+def test_gpu_list_prints_sorted_table(
+    fake_subprocess: FakeSubprocess, caplog: pytest.LogCaptureFixture
+) -> None:
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "EU-RO-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA RTX A4000", "stockStatus": "Low"},
+                            {"gpuId": "NVIDIA RTX A5000", "stockStatus": "High"},
+                            {"gpuId": "NVIDIA RTX A6000", "stockStatus": "Medium"},
+                        ],
+                    }
+                ]
+            )
+        )
+    )
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
+
+    rc = main(["gpu-list", "--datacenter", "EU-RO-1"])
+
+    assert rc == 0
+    messages = [r.message for r in caplog.records]
+    assert "datacenter: EU-RO-1" in messages
+    name_rows = [m for m in messages if m.startswith("NVIDIA")]
+    assert name_rows[0].startswith("NVIDIA RTX A5000")  # High first
+    assert name_rows[1].startswith("NVIDIA RTX A6000")  # Medium
+    assert name_rows[2].startswith("NVIDIA RTX A4000")  # Low last
+
+
+@pytest.mark.unit
+def test_gpu_list_raises_when_datacenter_missing(fake_subprocess: FakeSubprocess) -> None:
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps([{"id": "US-MO-1"}])))
+
+    with pytest.raises(RuntimeError, match="datacenter 'EU-RO-1' not found"):
+        main(["gpu-list", "--datacenter", "EU-RO-1"])

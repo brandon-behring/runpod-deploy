@@ -103,6 +103,18 @@ run:
 
 
 @pytest.mark.unit
+def test_build_context_rejects_project_root_resolving_to_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    spec = load_job_spec(config)
+
+    with pytest.raises(ValueError, match="project_root resolved to .HOME"):
+        build_job_context(spec, config)
+
+
+@pytest.mark.unit
 def test_run_spec_rejects_relative_script_path(tmp_path: Path) -> None:
     config = _write_minimal_config(
         tmp_path / "job.yaml",

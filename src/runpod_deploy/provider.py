@@ -57,7 +57,18 @@ def select_gpu_for_datacenter(
             stock = by_id.get(gpu_id, "")
             if stock and stock.lower() not in {"none", "unavailable", "out"}:
                 return gpu_id
-        raise RuntimeError(f"no configured GPU is available in {datacenter_id}; observed={by_id}")
+        message = f"no configured GPU is available in {datacenter_id}; observed={by_id}"
+        tier_rank = {"high": 0, "medium": 1, "low": 2}
+        available = sorted(
+            ((name, status) for name, status in by_id.items() if status.lower() in tier_rank),
+            key=lambda item: (tier_rank[item[1].lower()], item[0]),
+        )
+        if available:
+            hint_lines = [f"  - {name} ({status})" for name, status in available]
+            message = f"{message}\n  consider switching gpu_order to one of:\n" + "\n".join(
+                hint_lines
+            )
+        raise RuntimeError(message)
     raise RuntimeError(f"datacenter {datacenter_id!r} not found in runpodctl datacenter list")
 
 
