@@ -1,0 +1,143 @@
+schema_version: 1
+name: v3-1-ephemeral
+run_id_prefix: v3-1-ephemeral
+state_file: ~/.runpod-v3-ephemeral-current
+local:
+  project_root: ../../../prompt-injection-v3
+  required_paths: []
+variables:
+  remote_repo: /workspace/prompt-injection-v3
+  remote_eval_toolkit: /workspace/eval-toolkit
+  remote_venv: /workspace/.venv-v3
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: US-MD-1
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+    - NVIDIA A100 80GB PCIe
+    - NVIDIA H100 80GB HBM3
+    - NVIDIA H100 PCIe
+    - NVIDIA H100 NVL
+    - NVIDIA H100 SXM
+    - NVIDIA H200
+    - NVIDIA H200 NVL
+storage:
+  mode: ephemeral
+  volume_mount: /workspace
+  volume_gb: 200
+ssh:
+  key_path: ~/.ssh/id_ed25519
+budget:
+  cost_cap_usd: 50.0
+  assumed_hourly_rate_usd: 3.0
+  poll_interval_sec: 60
+remote_env:
+  source_files:
+    - /workspace/secrets/env
+  exports:
+    HF_HOME: /workspace/hf_cache
+    HUGGINGFACE_HUB_CACHE: /workspace/hf_cache
+    HF_HUB_DOWNLOAD_TIMEOUT: "120"
+    UV_CACHE_DIR: /workspace/uv_cache
+    UV_PROJECT_ENVIRONMENT: "{remote_venv}"
+setup:
+  - command: "test -d /workspace && touch /workspace/.runpod-deploy-write-test && rm /workspace/.runpod-deploy-write-test"
+    timeout_sec: 60
+  - command: "which rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync ; }"
+    timeout_sec: 300
+  - command: "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    timeout_sec: 300
+  - command: "mkdir -p /workspace/hf_cache /workspace/uv_cache {remote_repo} {remote_eval_toolkit} {remote_repo}/artifacts/data/v3_1 {remote_repo}/artifacts/data/v3_1_views {remote_repo}/artifacts/holdout/v3_1 {remote_repo}/artifacts/report"
+    timeout_sec: 120
+staging:
+  - label: prompt-injection-v3-code
+    source: "{project_root}/"
+    destination: "{remote_repo}/"
+    excludes:
+      - .git/
+      - .venv/
+      - .pytest_cache/
+      - .ruff_cache/
+      - "**/__pycache__/"
+      - "**/*.pyc"
+      - archive.zip
+      - data/public_sources/raw/
+      - artifacts/
+  - label: eval-toolkit
+    source: "{project_root}/../eval-toolkit/"
+    destination: "{remote_eval_toolkit}/"
+    excludes:
+      - .git/
+      - .venv/
+      - .pytest_cache/
+      - .mypy_cache/
+      - "**/__pycache__/"
+      - "**/*.pyc"
+      - .coverage
+  - label: v3-1-data
+    source: "{project_root}/artifacts/data/v3_1/"
+    destination: "{remote_repo}/artifacts/data/v3_1/"
+  - label: v3-1-views
+    source: "{project_root}/artifacts/data/v3_1_views/"
+    destination: "{remote_repo}/artifacts/data/v3_1_views/"
+  - label: v3-1-holdout
+    source: "{project_root}/artifacts/holdout/v3_1/"
+    destination: "{remote_repo}/artifacts/holdout/v3_1/"
+  - label: v3-1-protocol
+    source: "{project_root}/artifacts/report/V3_1_PROTOCOL.md"
+    destination: "{remote_repo}/artifacts/report/"
+preflight:
+  - command: "export PATH=$HOME/.local/bin:$PATH && cd {remote_repo} && uv sync --extra dev"
+    timeout_sec: 1800
+    with_env: true
+run:
+  script_path: /workspace/v3_1_threshold_free_runpod.sh
+  log_path: /workspace/v3_1_threshold_free_runpod.log
+  success_marker: "[v3_1_threshold_free_runpod] DONE"
+  body: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    [ -f /workspace/secrets/env ] && source /workspace/secrets/env || true
+    export HF_HOME=/workspace/hf_cache
+    export HUGGINGFACE_HUB_CACHE=/workspace/hf_cache
+    export HF_HUB_DOWNLOAD_TIMEOUT=120
+    export UV_CACHE_DIR=/workspace/uv_cache
+    export UV_PROJECT_ENVIRONMENT={remote_venv}
+    export PYTHONUNBUFFERED=1
+    cd {remote_repo}
+
+    echo "[v3_1_threshold_free_runpod] START $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    for view in raw_current body_only header_stripped canonical_email source_marker_stripped; do
+      echo "[v3_1_threshold_free_runpod] VIEW $view train"
+      uv run train --profile v3_1_threshold_free --representation-view "$view" --models heuristic,lr,lora --device cuda --lora-profile a100_80gb_final
+      echo "[v3_1_threshold_free_runpod] VIEW $view eval-dev"
+      uv run eval-dev --profile v3_1_threshold_free --representation-view "$view" --models heuristic,lr,lora,protectai_v1,protectai_v2 --device cuda
+      echo "[v3_1_threshold_free_runpod] VIEW $view eval-holdout"
+      uv run eval-holdout --profile v3_1_threshold_free --representation-view "$view" --models heuristic,lr,lora,protectai_v1,protectai_v2 --device cuda
+    done
+    uv run render-report --mode study --profile v3_1_threshold_free
+    echo "[v3_1_threshold_free_runpod] DONE $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+artifacts:
+  - label: models-v3-1
+    remote_path: "{remote_repo}/artifacts/models/v3_1/"
+    local_path: "{project_root}/artifacts/models/v3_1"
+    excludes:
+      - "**/lora/_trainer/checkpoint-*"
+    delete: false
+  - label: evals-v3-1
+    remote_path: "{remote_repo}/artifacts/evals/v3_1/"
+    local_path: "{project_root}/artifacts/evals/v3_1"
+    delete: false
+  - label: report-v3-1
+    remote_path: "{remote_repo}/artifacts/report/V3_1_THRESHOLD_FREE_STUDY.md"
+    local_path: "{project_root}/artifacts/report"
+    delete: false
+  - label: log
+    remote_path: /workspace/v3_1_threshold_free_runpod.log
+    local_path: "{run_dir}"
+    required: false
+    delete: false
+stop:
+  on_success: true
+  on_failure: true

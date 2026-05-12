@@ -1,0 +1,38 @@
+schema_version: 1
+name: post-transformers-gpu-benchmark
+run_id_prefix: post-transformers-bench
+local:
+  project_root: ../../../post_transformers
+  required_paths: []
+variables:
+  remote_repo: /workspace/post_transformers
+  remote_venv: /workspace/.venv-post-transformers
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: US-MD-1
+  gpu_order:
+    - NVIDIA RTX 4090
+    - NVIDIA L40S
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: ephemeral
+  volume_gb: 80
+run:
+  script_path: /workspace/post_transformers_bench.sh
+  log_path: /workspace/post_transformers_bench.log
+  success_marker: "[post_transformers_bench] DONE"
+  body: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    cd {remote_repo}
+    uv sync --extra dev --extra gpu
+    JAX_PLATFORMS=cuda uv run python bench/run_baseline.py
+    echo "[post_transformers_bench] DONE"
+artifacts:
+  - label: bench-baselines
+    remote_path: "{remote_repo}/bench/baselines/"
+    local_path: "{project_root}/bench/baselines"
+stop:
+  on_success: true
+  on_failure: true

@@ -1,0 +1,36 @@
+# Reusable CUDA + uv base template.
+#
+# Project-specific lockfile images should live in consumer repos. This template
+# captures the shared pattern: CUDA runtime alignment, uv, rsync, git, SSH, jq,
+# and a workspace mount point.
+
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=automatic \
+    HF_HUB_DOWNLOAD_TIMEOUT=120
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        openssh-client \
+        rsync \
+        jq \
+        curl \
+        ca-certificates \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh \
+    && mv /root/.local/bin/uv /usr/local/bin/uv \
+    && mv /root/.local/bin/uvx /usr/local/bin/uvx
+
+RUN mkdir -p /workspace
+WORKDIR /workspace
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/bash"]

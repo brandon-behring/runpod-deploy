@@ -1,0 +1,39 @@
+schema_version: 1
+name: research-kb-pdf-embed-gpu
+run_id_prefix: research-kb-gpu
+local:
+  project_root: ../../../research-kb
+  required_paths: []
+variables:
+  remote_repo: /workspace/research-kb
+  remote_venv: /workspace/.venv-research-kb
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: US-MD-1
+  gpu_order:
+    - NVIDIA L40S
+    - NVIDIA RTX 6000 Ada
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: ephemeral
+  volume_gb: 120
+run:
+  script_path: /workspace/research_kb_gpu.sh
+  log_path: /workspace/research_kb_gpu.log
+  success_marker: "[research_kb_gpu] DONE"
+  body: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    cd {remote_repo}
+    uv sync
+    nvidia-smi
+    echo "[research_kb_gpu] DONE"
+artifacts:
+  - label: log
+    remote_path: /workspace/research_kb_gpu.log
+    local_path: "{run_dir}"
+    required: false
+stop:
+  on_success: true
+  on_failure: true

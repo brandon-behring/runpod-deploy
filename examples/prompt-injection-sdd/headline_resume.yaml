@@ -1,0 +1,41 @@
+schema_version: 1
+name: sdd-headline-resume
+run_id_prefix: sdd-resume
+state_file: ~/.runpod-current
+local:
+  project_root: ../../../prompt-injection-sdd
+  required_paths: []
+variables:
+  remote_repo: /workspace/prompt-injection-sdd
+  remote_venv: /workspace/.venv
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: EU-RO-1
+  gpu_order:
+    - NVIDIA GeForce RTX 4090
+    - NVIDIA A40
+storage:
+  mode: network_volume
+  volume_name: pid-workspace-100gb
+  volume_mount: /workspace
+run:
+  script_path: /workspace/sdd_resume.sh
+  log_path: /workspace/sdd_resume.log
+  success_marker: "[run_aggregate_only] DONE"
+  body: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    [ -f /workspace/secrets/env ] && source /workspace/secrets/env || true
+    cd {remote_repo}
+    bash scripts/run_aggregate_only.sh
+artifacts:
+  - label: evals-v2-kfold
+    remote_path: "{remote_repo}/evals/v2_kfold/"
+    local_path: "{project_root}/evals/v2_kfold"
+    excludes:
+      - _trainer/
+      - fold_*/seed_*/checkpoint-*
+stop:
+  on_success: true
+  on_failure: false
