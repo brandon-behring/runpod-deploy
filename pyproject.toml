@@ -100,7 +100,7 @@ source = ["src/runpod_deploy"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 65
+fail_under = 71
 show_missing = true
 exclude_lines = [
     "pragma: no cover",
