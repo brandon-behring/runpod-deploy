@@ -16,3 +16,14 @@ These are operational constraints learned from prior project runs.
   in reusable images; prefer `/opt/...` and set `UV_PROJECT_ENVIRONMENT`.
 - Source `/workspace/secrets/env` if present, but never put secrets directly in
   configs or manifests.
+- `runpodctl doctor`'s `ssh_key.synced_to_cloud: true` does **not** mean your
+  local `~/.ssh/id_ed25519` is registered with the account — only that *some*
+  ed25519 key is. Pods will fail with `Permission denied (publickey,password)`
+  despite the green doctor report. Verify with `runpodctl ssh list-keys` and
+  match the pubkey content against `~/.ssh/id_ed25519.pub`; if absent, register
+  with `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` before the next
+  pod create. Existing pods will not pick up newly-added keys.
+- The RunPod stock `runpod/pytorch:*` images ship without `rsync`. Configs that
+  use `staging` or `artifacts` must install it in `setup` before the first
+  rsync call, e.g.
+  `which rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync ; }`.

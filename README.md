@@ -7,16 +7,27 @@ job configs and project commands.
 ## Quickstart
 
 ```bash
-cd /home/brandon_behring/Claude/runpod-deploy
 uv venv
 uv pip install -e ".[dev]"
 
-runpod-deploy validate --config examples/prompt-injection-v3/v3_1_ephemeral.yaml
-runpod-deploy run --config examples/prompt-injection-v3/v3_1_ephemeral.yaml --offline-dry-run
+runpod-deploy validate --config examples/smoke/a4000_smoke.yaml
+runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
 ```
 
 `--offline-dry-run` prints the provision/stage/launch/pull/stop command shape
-without calling `runpodctl`, SSH, or rsync.
+without calling `runpodctl`, SSH, or rsync. For a real end-to-end deploy on a
+cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it walks
+through the per-host setup (SSH key registration, rsync version) once.
+
+## Examples
+
+| Config | What it does |
+| --- | --- |
+| [`smoke/a4000_smoke.yaml`](examples/smoke/a4000_smoke.yaml) | Minimal nvidia-smi check on RTX A4000/A4500/A100 in EU-RO-1 — cheapest end-to-end pipeline test |
+| [`prompt-injection-v3/v3_1_ephemeral.yaml`](examples/prompt-injection-v3/v3_1_ephemeral.yaml) | Full prompt-injection-v3 threshold-free study on A100/H100, ephemeral storage |
+| [`prompt-injection-sdd/headline_resume.yaml`](examples/prompt-injection-sdd/headline_resume.yaml) | Headline/resume evaluation, network-volume storage |
+| [`research-kb/pdf_embed_gpu.yaml`](examples/research-kb/pdf_embed_gpu.yaml) | GPU-accelerated PDF embedding pipeline |
+| [`post_transformers/gpu_benchmark.yaml`](examples/post_transformers/gpu_benchmark.yaml) | post-transformers GPU benchmark workload |
 
 ## Model
 
