@@ -1,0 +1,1 @@
+hello from the smoke payload — if you see this line in gpu_info.txt, rsync staging worked end-to-end.
