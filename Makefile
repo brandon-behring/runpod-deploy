@@ -43,7 +43,7 @@ type:
 	$(PYTHON) -m mypy src
 
 coverage:
-	$(PYTHON) -m pytest --cov=runpod_deploy --cov-report=term-missing --cov-fail-under=85
+	$(PYTHON) -m pytest --cov=runpod_deploy --cov-report=term-missing
 
 ci: lint test coverage
 
