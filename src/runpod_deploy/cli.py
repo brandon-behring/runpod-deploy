@@ -57,6 +57,73 @@ def _level_from_args(args: argparse.Namespace) -> int:
     return logging.INFO
 
 
+def _cmd_validate(args: argparse.Namespace) -> int:
+    spec = load_job_spec(args.config)
+    ctx = build_job_context(spec, args.config)
+    if args.check_local:
+        validate_local_paths(ctx)
+    logger.info(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
+    return 0
+
+
+def _cmd_run(args: argparse.Namespace) -> int:
+    spec = load_job_spec(args.config)
+    if args.cost_cap_usd is not None:
+        spec = replace(
+            spec,
+            budget=replace(spec.budget, cost_cap_usd=float(args.cost_cap_usd)),
+        )
+    if args.max_runtime_minutes is not None:
+        spec = replace(
+            spec,
+            budget=replace(spec.budget, max_runtime_minutes=int(args.max_runtime_minutes)),
+        )
+    run_job(
+        spec,
+        config_path=args.config,
+        dry_run=bool(args.dry_run),
+        offline_dry_run=bool(args.offline_dry_run),
+    )
+    return 0
+
+
+def _cmd_stop(args: argparse.Namespace) -> int:
+    if not args.state_file.exists():
+        raise FileNotFoundError(f"state file not found: {args.state_file}")
+    payload = json.loads(args.state_file.read_text())
+    pod_id = str(payload.get("pod_id") or payload.get("id") or payload.get("podId") or "")
+    if not pod_id:
+        raise RuntimeError(f"state file has no pod id: {args.state_file}")
+    stop_pod(pod_id, dry_run=bool(args.dry_run), state_file=args.state_file)
+    return 0
+
+
+def _cmd_logs(args: argparse.Namespace) -> int:
+    spec = load_job_spec(args.config)
+    state_file = spec.resolved_state_file
+    if not state_file.exists():
+        raise FileNotFoundError(f"state file not found: {state_file}")
+    state = json.loads(state_file.read_text())
+    pod_id = str(state.get("pod_id") or "")
+    if not pod_id:
+        raise RuntimeError(f"state file has no pod_id: {state_file}")
+    payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"])
+    ssh_info_raw = payload.get("ssh") if isinstance(payload, dict) else None
+    ssh_info = ssh_info_raw if isinstance(ssh_info_raw, dict) else {}
+    host = str(ssh_info.get("ip") or "")
+    port = int(ssh_info.get("port") or 0)
+    if not host or not port:
+        raise RuntimeError(f"pod {pod_id} has no SSH info; payload={payload!r}")
+    ctx = build_job_context(spec, args.config)
+    log_path = ctx.render(spec.run.log_path)
+    runner = RemoteRunner(host=host, port=port, ssh_key=spec.ssh.resolved_key_path)
+    cmd = f"tail -n {args.lines}"
+    if not args.no_follow:
+        cmd += " -f"
+    cmd += f" {shlex.quote(log_path)}"
+    return runner.ssh_stream(cmd)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point."""
     verbosity = _verbosity_parser()
@@ -95,66 +162,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))
-    if args.command == "validate":
-        spec = load_job_spec(args.config)
-        ctx = build_job_context(spec, args.config)
-        if args.check_local:
-            validate_local_paths(ctx)
-        logger.info(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
-        return 0
-    if args.command == "run":
-        spec = load_job_spec(args.config)
-        if args.cost_cap_usd is not None:
-            spec = replace(
-                spec,
-                budget=replace(spec.budget, cost_cap_usd=float(args.cost_cap_usd)),
-            )
-        if args.max_runtime_minutes is not None:
-            spec = replace(
-                spec,
-                budget=replace(spec.budget, max_runtime_minutes=int(args.max_runtime_minutes)),
-            )
-        run_job(
-            spec,
-            config_path=args.config,
-            dry_run=bool(args.dry_run),
-            offline_dry_run=bool(args.offline_dry_run),
-        )
-        return 0
-    if args.command == "stop":
-        if not args.state_file.exists():
-            raise FileNotFoundError(f"state file not found: {args.state_file}")
-        payload = json.loads(args.state_file.read_text())
-        pod_id = str(payload.get("pod_id") or payload.get("id") or payload.get("podId") or "")
-        if not pod_id:
-            raise RuntimeError(f"state file has no pod id: {args.state_file}")
-        stop_pod(pod_id, dry_run=bool(args.dry_run), state_file=args.state_file)
-        return 0
-    if args.command == "logs":
-        spec = load_job_spec(args.config)
-        state_file = spec.resolved_state_file
-        if not state_file.exists():
-            raise FileNotFoundError(f"state file not found: {state_file}")
-        state = json.loads(state_file.read_text())
-        pod_id = str(state.get("pod_id") or "")
-        if not pod_id:
-            raise RuntimeError(f"state file has no pod_id: {state_file}")
-        payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"])
-        ssh_info_raw = payload.get("ssh") if isinstance(payload, dict) else None
-        ssh_info = ssh_info_raw if isinstance(ssh_info_raw, dict) else {}
-        host = str(ssh_info.get("ip") or "")
-        port = int(ssh_info.get("port") or 0)
-        if not host or not port:
-            raise RuntimeError(f"pod {pod_id} has no SSH info; payload={payload!r}")
-        ctx = build_job_context(spec, args.config)
-        log_path = ctx.render(spec.run.log_path)
-        runner = RemoteRunner(host=host, port=port, ssh_key=spec.ssh.resolved_key_path)
-        cmd = f"tail -n {args.lines}"
-        if not args.no_follow:
-            cmd += " -f"
-        cmd += f" {shlex.quote(log_path)}"
-        return runner.ssh_stream(cmd)
-    raise RuntimeError(f"unsupported command: {args.command}")
+    handlers = {
+        "validate": _cmd_validate,
+        "run": _cmd_run,
+        "stop": _cmd_stop,
+        "logs": _cmd_logs,
+    }
+    return handlers[args.command](args)
 
 
 if __name__ == "__main__":
