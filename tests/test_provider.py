@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from runpod_deploy.config import build_job_context, load_job_spec
-from runpod_deploy.provider import build_pod_create_argv, resolve_volume, select_gpu_for_datacenter
+from runpod_deploy.provider import _build_pod_create_argv, resolve_volume, select_gpu_for_datacenter
 
 
 @pytest.mark.unit
@@ -73,7 +73,7 @@ run:
 """)
     ctx = build_job_context(load_job_spec(config), config)
 
-    argv = build_pod_create_argv(ctx, volume_id="vol-1", gpu_id="gpu-a")
+    argv = _build_pod_create_argv(ctx, volume_id="vol-1", gpu_id="gpu-a")
 
     assert "--gpu-count" not in argv
     assert "--ports" in argv
@@ -103,7 +103,7 @@ run:
 """)
     ctx = build_job_context(load_job_spec(config), config)
 
-    argv = build_pod_create_argv(ctx, volume_id=None, gpu_id="gpu-a")
+    argv = _build_pod_create_argv(ctx, volume_id=None, gpu_id="gpu-a")
 
     assert "--gpu-count" in argv
     assert "--volume-in-gb" in argv
