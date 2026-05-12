@@ -70,3 +70,45 @@ def test_examples_are_schema_valid() -> None:
     repo = Path(__file__).resolve().parents[1]
     for config in sorted((repo / "examples").glob("**/*.yaml")):
         load_job_spec(config)
+
+
+@pytest.mark.unit
+def test_run_spec_accepts_templated_script_path(tmp_path: Path) -> None:
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 1
+name: demo
+run_id_prefix: demo
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenter_id: EU-RO-1
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: network_volume
+  volume_name: vol
+  volume_mount: /workspace
+run:
+  script_path: "{volume_mount}/demo.sh"
+  log_path: "{volume_mount}/demo.log"
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+""")
+
+    spec = load_job_spec(config)
+
+    assert spec.run.script_path == "{volume_mount}/demo.sh"
+    assert spec.run.log_path == "{volume_mount}/demo.log"
+
+
+@pytest.mark.unit
+def test_run_spec_rejects_relative_script_path(tmp_path: Path) -> None:
+    config = _write_minimal_config(
+        tmp_path / "job.yaml",
+        extra="",
+    )
+    config.write_text(config.read_text().replace("/workspace/demo.sh", "relative.sh"))
+
+    with pytest.raises(ValueError, match="run.script_path must be absolute or a template"):
+        load_job_spec(config)

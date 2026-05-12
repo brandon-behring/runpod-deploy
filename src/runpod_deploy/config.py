@@ -192,10 +192,12 @@ class RunSpec:
     failure_markers: tuple[str, ...] = DEFAULT_FAILURE_MARKERS
 
     def __post_init__(self) -> None:
-        if not self.script_path.startswith("/"):
-            raise ValueError(f"run.script_path must be absolute, got {self.script_path!r}")
-        if not self.log_path.startswith("/"):
-            raise ValueError(f"run.log_path must be absolute, got {self.log_path!r}")
+        if not (self.script_path.startswith("/") or self.script_path.startswith("{")):
+            raise ValueError(
+                f"run.script_path must be absolute or a template, got {self.script_path!r}"
+            )
+        if not (self.log_path.startswith("/") or self.log_path.startswith("{")):
+            raise ValueError(f"run.log_path must be absolute or a template, got {self.log_path!r}")
         if not self.success_marker:
             raise ValueError("run.success_marker must be non-empty")
         if not self.body.strip():

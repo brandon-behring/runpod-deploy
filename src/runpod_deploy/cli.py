@@ -23,13 +23,8 @@ def _configure_logging(level: int = logging.INFO) -> None:
     """Route runpod_deploy DEBUG/INFO to stdout and WARNING/ERROR to stderr."""
     root = logging.getLogger("runpod_deploy")
     for handler in list(root.handlers):
-        if isinstance(handler, logging.NullHandler):
-            root.removeHandler(handler)
+        root.removeHandler(handler)
     root.setLevel(level)
-    if any(not isinstance(h, logging.NullHandler) for h in root.handlers):
-        for handler in root.handlers:
-            handler.setLevel(level if handler.stream is sys.stdout else logging.WARNING)
-        return
     info_handler = logging.StreamHandler(sys.stdout)
     info_handler.setLevel(level)
     info_handler.addFilter(lambda record: record.levelno < logging.WARNING)

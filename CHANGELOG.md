@@ -4,6 +4,13 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- `--verbose` / `--quiet` flags on every CLI subcommand. `--verbose` raises
+  the log level to `DEBUG` and surfaces a handful of new debug records
+  (rsync source/dest, ssh return codes, JSON payload types). `--quiet`
+  lowers it to `WARNING` so info chatter is suppressed.
+
 ### Changed
 
 - `print()` calls in `cli.py`, `orchestrator.py`, `provider.py`, and
@@ -12,6 +19,9 @@ This project follows Semantic Versioning.
   can now filter via the `runpod_deploy` logger.
 - `transport.print_cmd` renamed to `transport.log_cmd(logger, label, argv)`;
   signature now takes the caller's logger explicitly.
+- `run.script_path` and `run.log_path` now accept template variables (e.g.
+  `{volume_mount}/script.sh`), matching `artifacts.remote_path` and
+  `staging.destination`. Relative paths are still rejected.
 
 ### Fixed
 
