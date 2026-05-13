@@ -58,6 +58,7 @@ def run_job(
         dry_run=dry_run,
     )
     failed = False
+    run_started = False
     try:
         _wait_for_sshd(runner)
         _run_commands(runner, ctx, spec.setup, label="setup")
@@ -65,13 +66,17 @@ def run_job(
         _push_workspace(runner, ctx)
         _run_commands(runner, ctx, spec.preflight, label="preflight")
         _launch_remote_job(runner, ctx)
+        run_started = True
         _monitor_remote_log(runner, ctx)
         _pull_artifacts(runner, ctx, failed=False, pod=pod)
     except Exception:
         failed = True
         if not dry_run:
-            with contextlib.suppress(Exception):
-                _pull_artifacts(runner, ctx, failed=True, pod=pod)
+            if run_started:
+                with contextlib.suppress(Exception):
+                    _pull_artifacts(runner, ctx, failed=True, pod=pod)
+            else:
+                logger.warning("[warn] skipping artifact pulls — run script did not execute")
         raise
     finally:
         should_stop = spec.stop.on_failure if failed else spec.stop.on_success
