@@ -271,6 +271,62 @@ def test_run_job_budget_cap_exceeded_raises_before_provisioning(
         run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
 
 
+@pytest.mark.unit
+def test_preflight_failure_skips_artifact_pulls(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+
+    def raise_on_setup(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("simulated preflight failure")
+
+    monkeypatch.setattr("runpod_deploy.orchestrator._run_commands", raise_on_setup)
+    config = _write_full_config(tmp_path)
+    spec = load_job_spec(config)
+
+    with pytest.raises(RuntimeError, match="simulated preflight failure"):
+        run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    rsync_calls = [c for c in fake_subprocess.calls if c and c[0] == "rsync"]
+    assert rsync_calls == []
+    assert "skipping artifact pulls — run script did not execute" in caplog.text
+
+
+@pytest.mark.unit
+def test_run_started_failure_still_attempts_pull(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="oops\n__RUNPOD_DEPLOY_FAIL__\n"))
+    config = _write_full_config(tmp_path, artifact_required=False)
+    spec = load_job_spec(config)
+
+    with pytest.raises(RuntimeError, match="failure marker"):
+        run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    assert "skipping artifact pulls" not in caplog.text
+    pull_calls = [
+        c
+        for c in fake_subprocess.calls
+        if c and c[0] == "rsync" and len(c) >= 2 and c[-2].startswith("root@")
+    ]
+    assert len(pull_calls) >= 1
+
+
 # ---------- _wait_for_sshd unit ----------
 
 

@@ -59,6 +59,17 @@ This project follows Semantic Versioning.
   with stdout/stderr inherited from the parent process. Used by the new
   `logs` subcommand to stream `tail -f` output in real time.
 
+### Fixed
+
+- `runpod-deploy run` now skips artifact pulls entirely when the run
+  script never executed (e.g., setup or preflight commands failed
+  before `_launch_remote_job` could start the script). Previously
+  each artifact pull ran anyway, emitting rsync `change_dir` /
+  `code 23` warnings that buried the real cause-of-failure trace.
+  When the script *did* start but then failed, the existing
+  diagnostic-noise behavior is preserved — rsync errors are still
+  visible because partial artifacts may exist. Closes #5b.
+
 ### Changed
 
 - `provider.select_gpu_for_datacenter` raises a richer error when no
