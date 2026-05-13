@@ -134,6 +134,15 @@ def scan_consumer_pyproject(ctx: JobContext) -> None:
             "[scan] pyproject.toml: 'runpod-deploy' in [tool.uv.sources] — "
             "remove this entry along with the dependency."
         )
+    if _has_torch_dependency(data) and not _has_torch_pinned(data):
+        logger.warning(
+            "[scan] pyproject.toml: 'torch' is in dependencies but not pinned to a "
+            "CUDA-specific wheel via [tool.uv.sources]. RunPod pods (as of 2026-05) "
+            "support CUDA up to 12.8; newer torch wheels from default PyPI can fail "
+            "torch.cuda.is_available() despite the GPU being functional. See "
+            "docs/runpod-gotchas.md for the "
+            '[tool.uv.sources] torch = { index = "pytorch-cu128" } pattern.'
+        )
 
 
 def scan_staged_payloads_for_absolute_paths(ctx: JobContext) -> None:
@@ -190,3 +199,33 @@ def _names_runpod_deploy(dependency_string: str) -> bool:
     """Return True when a PEP 508 dependency string names runpod-deploy."""
     head = re.split(r"[<>=!~;\[ ]", dependency_string.strip(), maxsplit=1)[0]
     return head.lower() == "runpod-deploy"
+
+
+def _names_torch(dependency_string: str) -> bool:
+    """Return True when a PEP 508 dependency string names torch (not torchvision etc.)."""
+    head = re.split(r"[<>=!~;\[ ]", dependency_string.strip(), maxsplit=1)[0]
+    return head.lower() == "torch"
+
+
+def _has_torch_dependency(data: Mapping[str, Any]) -> bool:
+    project = data.get("project") or {}
+    deps = project.get("dependencies") or []
+    if isinstance(deps, list):
+        for dep in deps:
+            if isinstance(dep, str) and _names_torch(dep):
+                return True
+    optional = project.get("optional-dependencies") or {}
+    if isinstance(optional, Mapping):
+        for group_deps in optional.values():
+            if not isinstance(group_deps, list):
+                continue
+            for dep in group_deps:
+                if isinstance(dep, str) and _names_torch(dep):
+                    return True
+    return False
+
+
+def _has_torch_pinned(data: Mapping[str, Any]) -> bool:
+    """True when [tool.uv.sources] has any explicit entry for torch."""
+    sources = (data.get("tool") or {}).get("uv", {}).get("sources") or {}
+    return isinstance(sources, Mapping) and "torch" in sources

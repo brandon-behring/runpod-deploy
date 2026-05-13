@@ -18,6 +18,14 @@ This project follows Semantic Versioning.
   CLAUDE.md §15. Closes #2.
 - `transport.rsync_argv` / `RemoteRunner.rsync_push` now accept an optional
   `chmod: str | None = None` parameter used by the secrets pipeline.
+- `validate --scan-consumer` now also warns when `torch` is listed in the
+  consumer's `[project.dependencies]` or `[project.optional-dependencies]`
+  but no `[tool.uv.sources]` entry pins it to a CUDA-specific wheel.
+  Points the user at the new `docs/runpod-gotchas.md` section on wheel
+  pinning. Quiet when torch is pinned (any `[tool.uv.sources].torch`
+  entry suffices) or when torch isn't a dependency. Closes #3.
+- New "Pinning torch to a CUDA-compatible wheel" section in
+  `docs/runpod-gotchas.md` documenting the `pytorch-cu128` index pattern.
 - `runpod-deploy validate --check-availability` — opt-in flag that
   live-queries `runpodctl datacenter list` and verifies every
   `gpu_order` entry against the configured datacenter. Catches name

@@ -230,6 +230,68 @@ def test_scan_consumer_pyproject_skips_when_absent(
 
 
 @pytest.mark.unit
+def test_scan_consumer_pyproject_warns_on_unpinned_torch(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("""
+[project]
+name = "consumer"
+version = "0.1.0"
+dependencies = ["torch>=2.0.0"]
+""")
+    ctx = _build_ctx(tmp_path)
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "torch" in messages
+    assert "pytorch-cu128" in messages
+    assert "runpod-gotchas.md" in messages
+
+
+@pytest.mark.unit
+def test_scan_consumer_pyproject_quiet_when_torch_pinned(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("""
+[project]
+name = "consumer"
+version = "0.1.0"
+dependencies = ["torch>=2.0.0"]
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+""")
+    ctx = _build_ctx(tmp_path)
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    torch_warnings = [
+        r for r in caplog.records if "torch" in r.message and r.levelname == "WARNING"
+    ]
+    assert torch_warnings == []
+
+
+@pytest.mark.unit
+def test_scan_consumer_pyproject_does_not_match_torchvision(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "pyproject.toml").write_text("""
+[project]
+name = "consumer"
+version = "0.1.0"
+dependencies = ["torchvision>=0.15.0", "torchaudio"]
+""")
+    ctx = _build_ctx(tmp_path)
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    assert not any("torch" in r.message and r.levelname == "WARNING" for r in caplog.records)
+
+
+@pytest.mark.unit
 def test_scan_consumer_pyproject_clean_is_silent(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
