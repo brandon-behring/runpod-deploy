@@ -19,6 +19,7 @@ from runpod_deploy.config import (
     RsyncPushSpec,
     RunpodJobSpec,
     RunSpec,
+    SecretSpec,
     SshSpec,
     StopPolicySpec,
     StorageSpec,
@@ -52,6 +53,7 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
             "setup",
             "preflight",
             "staging",
+            "secrets",
             "run",
             "artifacts",
             "stop",
@@ -72,6 +74,7 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
         setup=_parse_commands(raw.get("setup", ()), "setup"),
         preflight=_parse_commands(raw.get("preflight", ()), "preflight"),
         staging=_parse_rsync_pushes(raw.get("staging", ())),
+        secrets=_parse_secrets(raw.get("secrets", ())),
         run=_parse_run(_mapping(raw.get("run"), "run")),
         artifacts=_parse_artifacts(raw.get("artifacts", ())),
         stop=_parse_stop(_mapping(raw.get("stop", {}), "stop")),
@@ -192,6 +195,28 @@ def _parse_rsync_pushes(raw: Any) -> tuple[RsyncPushSpec, ...]:
                 destination=_as_str(mapping.get("destination"), f"{item_label}.destination"),
                 excludes=_tuple_str(mapping.get("excludes", ()), f"{item_label}.excludes"),
                 delete=_as_bool(mapping.get("delete", True), f"{item_label}.delete"),
+            )
+        )
+    return tuple(out)
+
+
+def _parse_secrets(raw: Any) -> tuple[SecretSpec, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, Sequence) or isinstance(raw, str):
+        raise TypeError("secrets must be a list of secret mappings")
+    out: list[SecretSpec] = []
+    for i, item in enumerate(raw):
+        item_label = f"secrets[{i}]"
+        mapping = _mapping(item, item_label)
+        _check_keys(mapping, item_label, {"name", "destination", "env", "file", "mode"})
+        out.append(
+            SecretSpec(
+                name=_as_str(mapping.get("name"), f"{item_label}.name"),
+                destination=_as_str(mapping.get("destination"), f"{item_label}.destination"),
+                env=_tuple_str(mapping.get("env", ()), f"{item_label}.env"),
+                file=_optional_str(mapping.get("file"), f"{item_label}.file"),
+                mode=_as_str(mapping.get("mode", "0600"), f"{item_label}.mode"),
             )
         )
     return tuple(out)

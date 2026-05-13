@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import shlex
+import tempfile
 import time
 from pathlib import Path
 
@@ -13,6 +15,7 @@ from runpod_deploy.config import (
     CommandSpec,
     JobContext,
     RunpodJobSpec,
+    SecretSpec,
     build_job_context,
     validate_local_paths,
 )
@@ -58,6 +61,7 @@ def run_job(
     try:
         _wait_for_sshd(runner)
         _run_commands(runner, ctx, spec.setup, label="setup")
+        _stage_secrets(runner, ctx)
         _push_workspace(runner, ctx)
         _run_commands(runner, ctx, spec.preflight, label="preflight")
         _launch_remote_job(runner, ctx)
@@ -152,6 +156,67 @@ def _run_commands(
         result = runner.ssh_exec(rendered, timeout_sec=command.timeout_sec, check=True)
         if result.stdout:
             logger.info(result.stdout)
+
+
+def _stage_secrets(runner: RemoteRunner, ctx: JobContext) -> None:
+    """Stage each `secrets:` entry to the pod with restrictive perms.
+
+    Secret values are never logged. For ``env`` secrets the orchestrator reads
+    each named local env var, writes ``KEY=value`` lines to a tempfile, and
+    rsyncs it to ``destination`` with ``--chmod=F<mode>``. For ``file`` secrets
+    the local file is rsynced directly. The parent directory of ``destination``
+    is created via ``mkdir -p`` first.
+    """
+    for secret in ctx.spec.secrets:
+        destination = ctx.render(secret.destination)
+        parent_dir = str(Path(destination).parent)
+        logger.info(f"[secrets] staging {secret.name!r} -> {destination} (mode={secret.mode})")
+        runner.ssh_exec(f"mkdir -p {shlex.quote(parent_dir)}", timeout_sec=30, check=True)
+        if secret.env:
+            _stage_env_secret(runner, secret, destination=destination)
+        elif secret.file is not None:
+            rendered = ctx.render(secret.file)
+            local_path = Path(rendered).expanduser()
+            if not local_path.exists():
+                raise FileNotFoundError(
+                    f"secret {secret.name!r} source file not found: {local_path}"
+                )
+            transfer = RsyncTransfer(
+                label=f"secret:{secret.name}",
+                source=str(local_path),
+                destination=destination,
+                delete=False,
+            )
+            runner.rsync_push(transfer, chmod=secret.mode)
+
+
+def _stage_env_secret(runner: RemoteRunner, secret: SecretSpec, *, destination: str) -> None:
+    lines: list[str] = []
+    for var in secret.env:
+        try:
+            value = os.environ[var]
+        except KeyError as exc:
+            raise KeyError(
+                f"secret {secret.name!r} requires env var {var!r}, which is not set in the "
+                "local environment"
+            ) from exc
+        lines.append(f"{var}={value}")
+    content = "\n".join(lines) + "\n"
+    fd, tmp_name = tempfile.mkstemp(prefix="runpod-secret-", suffix=".env")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(content)
+        tmp_path.chmod(0o600)
+        transfer = RsyncTransfer(
+            label=f"secret:{secret.name}",
+            source=str(tmp_path),
+            destination=destination,
+            delete=False,
+        )
+        runner.rsync_push(transfer, chmod=secret.mode)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def _push_workspace(runner: RemoteRunner, ctx: JobContext) -> None:

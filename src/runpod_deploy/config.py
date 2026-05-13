@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -21,11 +22,14 @@ __all__ = [
     "RsyncPushSpec",
     "RunSpec",
     "RunpodJobSpec",
+    "SecretSpec",
     "SshSpec",
     "StopPolicySpec",
     "StorageSpec",
     "load_job_spec",
 ]
+
+_OCTAL_MODE_RE = re.compile(r"^0?[0-7]{3}$")
 
 SCHEMA_VERSION = 1
 STORAGE_NETWORK_VOLUME = "network_volume"
@@ -223,6 +227,55 @@ class ArtifactPullSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class SecretSpec:
+    """One staged secret file on the pod.
+
+    Exactly one of ``env`` or ``file`` must be set:
+
+    - ``env``: a tuple of local environment variable names. The orchestrator
+      reads each variable from the local process environment and writes
+      ``KEY=value`` lines to ``destination`` on the pod.
+    - ``file``: a local file path (with ``~`` expanded). The orchestrator copies
+      the file to ``destination`` on the pod.
+
+    ``mode`` is a 3- or 4-digit octal string (default ``"0600"``) enforced via
+    rsync's ``--chmod=Fnnn`` flag on transfer.
+    """
+
+    name: str
+    destination: str
+    env: tuple[str, ...] = ()
+    file: str | None = None
+    mode: str = "0600"
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("secrets[].name must be non-empty")
+        if not self.destination:
+            raise ValueError(f"secrets[{self.name!r}].destination must be non-empty")
+        if not (self.destination.startswith("/") or self.destination.startswith("{")):
+            raise ValueError(
+                f"secrets[{self.name!r}].destination must be absolute or a template, "
+                f"got {self.destination!r}"
+            )
+        if bool(self.env) == (self.file is not None):
+            raise ValueError(
+                f"secrets[{self.name!r}] must set exactly one of 'env' or 'file', "
+                f"got env={self.env!r} file={self.file!r}"
+            )
+        for var in self.env:
+            if not var.isidentifier():
+                raise ValueError(
+                    f"secrets[{self.name!r}].env must contain valid identifiers, got {var!r}"
+                )
+        if not _OCTAL_MODE_RE.match(self.mode):
+            raise ValueError(
+                f"secrets[{self.name!r}].mode must be a 3- or 4-digit octal string, "
+                f"got {self.mode!r}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class StopPolicySpec:
     """Whether to stop the pod after success/failure."""
 
@@ -248,6 +301,7 @@ class RunpodJobSpec:
     setup: tuple[CommandSpec, ...] = ()
     preflight: tuple[CommandSpec, ...] = ()
     staging: tuple[RsyncPushSpec, ...] = ()
+    secrets: tuple[SecretSpec, ...] = ()
     artifacts: tuple[ArtifactPullSpec, ...] = ()
     stop: StopPolicySpec = field(default_factory=StopPolicySpec)
     variables: dict[str, str] = field(default_factory=dict)

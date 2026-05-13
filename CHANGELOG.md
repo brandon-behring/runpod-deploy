@@ -6,6 +6,18 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- New top-level `secrets:` YAML block — stages one file per entry to the pod
+  with restrictive perms (default `0600`). Each entry sets exactly one of
+  `env: [VAR_NAME, ...]` (orchestrator reads local env vars and writes
+  `KEY=value` lines) or `file: /local/path` (orchestrator rsyncs the local
+  file). The parent directory is auto-created via `ssh mkdir -p`. Perms are
+  enforced via rsync `--chmod=Fnnn` on transfer (works around the global
+  `--no-perms` flag). Secret values are never logged at any verbosity. The
+  consumer separately declares `remote_env.source_files` to wire the file
+  into the run script — auto-sourcing is intentionally left explicit per
+  CLAUDE.md §15. Closes #2.
+- `transport.rsync_argv` / `RemoteRunner.rsync_push` now accept an optional
+  `chmod: str | None = None` parameter used by the secrets pipeline.
 - `runpod-deploy validate --check-availability` — opt-in flag that
   live-queries `runpodctl datacenter list` and verifies every
   `gpu_order` entry against the configured datacenter. Catches name
