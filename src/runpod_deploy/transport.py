@@ -135,8 +135,19 @@ class RemoteRunner:
         if proc.stderr is not None:
             proc.stderr.close()
 
-    def rsync_push(self, transfer: RsyncTransfer, *, timeout_sec: int = 3600) -> None:
-        """Push a local path to the pod."""
+    def rsync_push(
+        self,
+        transfer: RsyncTransfer,
+        *,
+        timeout_sec: int = 3600,
+        chmod: str | None = None,
+    ) -> None:
+        """Push a local path to the pod.
+
+        ``chmod`` is a 3- or 4-digit octal string. When set, rsync enforces
+        the mode on transfer via ``--chmod=Fnnn`` (overriding the global
+        ``--no-perms`` flag for files only).
+        """
         argv = rsync_argv(
             source=transfer.source,
             destination=f"{self.target}:{transfer.destination}",
@@ -144,6 +155,7 @@ class RemoteRunner:
             ssh_key=self.ssh_key,
             excludes=transfer.excludes,
             delete=transfer.delete,
+            chmod=chmod,
         )
         log_cmd(logger, f"rsync-push:{transfer.label}", argv)
         logger.debug(
@@ -190,8 +202,13 @@ def rsync_argv(
     ssh_key: Path,
     excludes: tuple[str, ...],
     delete: bool = True,
+    chmod: str | None = None,
 ) -> list[str]:
-    """Build the project-standard rsync argv."""
+    """Build the project-standard rsync argv.
+
+    Pass ``chmod`` as a 3- or 4-digit octal string to enforce file mode on
+    transfer (overrides ``--no-perms`` for files via ``--chmod=Fnnn``).
+    """
     argv = [
         "rsync",
         "-az",
@@ -204,6 +221,9 @@ def rsync_argv(
     ]
     if delete:
         argv.insert(6, "--delete")
+    if chmod is not None:
+        bare = chmod[1:] if len(chmod) == 4 and chmod.startswith("0") else chmod
+        argv.extend(["--chmod", f"F{bare}"])
     for pattern in excludes:
         argv.extend(["--exclude", pattern])
     argv.extend([source, destination])

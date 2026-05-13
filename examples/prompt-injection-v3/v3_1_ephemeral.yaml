@@ -31,6 +31,14 @@ budget:
   cost_cap_usd: 50.0
   assumed_hourly_rate_usd: 3.0
   poll_interval_sec: 60
+secrets:
+  # Stage HF_TOKEN into the file that remote_env.source_files reads below.
+  # Set HF_TOKEN locally before `runpod-deploy run`; the orchestrator never
+  # logs the value.
+  - name: hf
+    destination: /workspace/secrets/env
+    mode: "0600"
+    env: [HF_TOKEN]
 remote_env:
   source_files:
     - /workspace/secrets/env
