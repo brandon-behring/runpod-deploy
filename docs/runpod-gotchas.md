@@ -27,3 +27,31 @@ These are operational constraints learned from prior project runs.
   use `staging` or `artifacts` must install it in `setup` before the first
   rsync call, e.g.
   `which rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync ; }`.
+
+## Pinning torch to a CUDA-compatible wheel
+
+RunPod pods (as of 2026-05) provide NVIDIA drivers supporting CUDA up to 12.8.
+Newer torch wheels published to default PyPI can require CUDA 12.9+ and will
+fail `torch.cuda.is_available()` despite the GPU being functional. The failure
+mode is non-obvious: `nvidia-smi` works, `torch.cuda.is_available()` returns
+`False`, and the error message blames the driver — not the wheel.
+
+Pin torch to a CUDA-specific wheel index in the **consumer** `pyproject.toml`:
+
+```toml
+[tool.uv]
+environments = ["sys_platform == 'linux'"]   # skip macOS resolution churn
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+```
+
+When RunPod ships pods with newer drivers, bump the index URL (`cu128` →
+`cu129` etc.) and re-run `uv sync` on the pod. `runpod-deploy validate
+--scan-consumer` warns when `torch` is in `[project.dependencies]` but has no
+corresponding `[tool.uv.sources]` entry.
