@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from runpod_deploy import metadata, preflight
+from runpod_deploy import metadata, preflight, pricing
 from runpod_deploy.config import (
     STORAGE_NETWORK_VOLUME,
     build_job_context,
@@ -86,22 +86,64 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 def _cmd_gpu_list(args: argparse.Namespace) -> int:
     entry = preflight.fetch_datacenter_payload(args.datacenter)
     availability = entry.get("gpuAvailability") or []
-    rows: list[tuple[str, str]] = []
+    rows: list[tuple[str, str, float | None]] = []
+    prices = _maybe_fetch_prices(force_refresh=False) if not args.no_prices else {}
     if isinstance(availability, list):
         for item in availability:
             if isinstance(item, dict):
                 name = str(item.get("gpuId") or "")
                 status = str(item.get("stockStatus") or "").strip()
                 if name:
-                    rows.append((name, status or "—"))
+                    price = pricing.select_price_for_pod(
+                        prices,
+                        gpu_id=name,
+                        cloud_type=args.cloud_type,
+                        spot=bool(args.spot),
+                    )
+                    rows.append((name, status or "—", price))
     tier_rank = {"high": 0, "medium": 1, "low": 2}
     rows.sort(key=lambda row: (tier_rank.get(row[1].lower(), 99), row[0]))
-    name_width = max((len(name) for name, _ in rows), default=3)
+    name_width = max((len(name) for name, _, _ in rows), default=3)
+    has_prices = any(p is not None for _, _, p in rows)
     logger.info(f"datacenter: {args.datacenter}")
-    logger.info(f"{'gpu':<{name_width}}  stock")
-    for name, status in rows:
-        logger.info(f"{name:<{name_width}}  {status}")
+    if has_prices:
+        cloud_label = f"{args.cloud_type.lower()}{'-spot' if args.spot else ''}"
+        logger.info(f"{'gpu':<{name_width}}  stock     $/hr ({cloud_label})")
+        for name, status, price in rows:
+            price_str = f"${price:.2f}" if price is not None else "—"
+            logger.info(f"{name:<{name_width}}  {status:<8}  {price_str}")
+    else:
+        logger.info(f"{'gpu':<{name_width}}  stock")
+        for name, status, _ in rows:
+            logger.info(f"{name:<{name_width}}  {status}")
     return 0
+
+
+def _cmd_gpu_prices(args: argparse.Namespace) -> int:
+    prices = _maybe_fetch_prices(force_refresh=bool(args.no_price_cache))
+    if not prices:
+        logger.warning("[gpu-prices] no prices returned; check RUNPOD_API_KEY and network")
+        return 1
+    rows: list[tuple[str, float | None]] = []
+    for gpu_id, _ in prices.items():
+        price = pricing.select_price_for_pod(
+            prices, gpu_id=gpu_id, cloud_type=args.cloud_type, spot=bool(args.spot)
+        )
+        rows.append((gpu_id, price))
+    # Sort by price ascending (None last), then gpu_id.
+    rows.sort(key=lambda row: (row[1] is None, row[1] or 0.0, row[0]))
+    name_width = max((len(name) for name, _ in rows), default=3)
+    cloud_label = f"{args.cloud_type.lower()}{'-spot' if args.spot else ''}"
+    logger.info(f"{'gpu':<{name_width}}  $/hr ({cloud_label})")
+    for name, price in rows:
+        price_str = f"${price:.2f}" if price is not None else "—"
+        logger.info(f"{name:<{name_width}}  {price_str}")
+    return 0
+
+
+def _maybe_fetch_prices(*, force_refresh: bool) -> dict[str, pricing.GpuPrice]:
+    """Fetch prices; return empty dict on any failure (already WARN'd by pricing.py)."""
+    return pricing.fetch_gpu_prices(force_refresh=force_refresh)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -125,6 +167,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         offline_dry_run=bool(args.offline_dry_run),
         gpu_id_override=args.gpu_id,
         datacenter_id_override=args.datacenter_id,
+        max_gpu_price_usd=args.max_gpu_price,
     )
     return 0
 
@@ -272,6 +315,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Override pod.datacenters; must be supplied with --gpu-id.",
     )
+    run_parser.add_argument(
+        "--max-gpu-price",
+        type=float,
+        default=None,
+        help="Skip GPUs above this $/hr ceiling during failover loop. "
+        "Reads RUNPOD_API_KEY for GraphQL pricing.",
+    )
 
     stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
     stop_parser.add_argument("--state-file", type=Path, required=True)
@@ -291,9 +341,45 @@ def main(argv: Sequence[str] | None = None) -> int:
     gpu_list_parser = sub.add_parser(
         "gpu-list",
         parents=[verbosity],
-        help="Print GPU availability for one RunPod datacenter.",
+        help="Print GPU availability + price for one RunPod datacenter.",
     )
     gpu_list_parser.add_argument("--datacenter", type=str, required=True)
+    gpu_list_parser.add_argument(
+        "--cloud-type",
+        choices=["SECURE", "COMMUNITY"],
+        default="SECURE",
+        help="Pick price field (default SECURE).",
+    )
+    gpu_list_parser.add_argument(
+        "--spot",
+        action="store_true",
+        help="Show spot prices instead of on-demand.",
+    )
+    gpu_list_parser.add_argument(
+        "--no-prices",
+        action="store_true",
+        help="Skip the GraphQL price fetch (offline / no API key available).",
+    )
+
+    gpu_prices_parser = sub.add_parser(
+        "gpu-prices",
+        parents=[verbosity],
+        help="Print all GPU prices from RunPod GraphQL gpuTypes (sorted by $/hr).",
+    )
+    gpu_prices_parser.add_argument(
+        "--cloud-type",
+        choices=["SECURE", "COMMUNITY"],
+        default="SECURE",
+        help="Pick price field (default SECURE).",
+    )
+    gpu_prices_parser.add_argument(
+        "--spot", action="store_true", help="Show spot prices instead of on-demand."
+    )
+    gpu_prices_parser.add_argument(
+        "--no-price-cache",
+        action="store_true",
+        help="Bypass the on-disk price cache and force a fresh GraphQL request.",
+    )
 
     capture_env_parser = sub.add_parser(
         "capture-env",
@@ -324,6 +410,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stop": _cmd_stop,
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
+        "gpu-prices": _cmd_gpu_prices,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }

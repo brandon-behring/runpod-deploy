@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from runpod_deploy import metadata, telemetry
+from runpod_deploy import metadata, pricing, telemetry
 from runpod_deploy.config import (
     STORAGE_NETWORK_VOLUME,
     CommandSpec,
@@ -48,6 +48,7 @@ def run_job(
     offline_dry_run: bool = False,
     gpu_id_override: str | None = None,
     datacenter_id_override: str | None = None,
+    max_gpu_price_usd: float | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -71,7 +72,10 @@ def run_job(
         logger.info(f"[gpu] CLI override: gpu_id={gpu_id!r} datacenter_id={datacenter_id!r}")
     else:
         gpu_id, datacenter_id = _resolve_gpu_id_and_dc(
-            spec, offline=offline_dry_run, on_failover=_buffer_failover(pending_failover)
+            spec,
+            offline=offline_dry_run,
+            on_failover=_buffer_failover(pending_failover),
+            max_gpu_price_usd=max_gpu_price_usd,
         )
     volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
     pod = provision_pod(
@@ -197,16 +201,32 @@ def _resolve_gpu_id_and_dc(
     *,
     offline: bool,
     on_failover: Callable[[str, str | None, str], None] | None = None,
+    max_gpu_price_usd: float | None = None,
 ) -> tuple[str, str]:
     """Pick (gpu_id, datacenter_id) for provisioning across the configured DCs."""
     if offline:
         return spec.pod.gpu_order[0], spec.pod.datacenters[0]
     datacenters_payload = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
+    prices_map: dict[str, float] | None = None
+    if max_gpu_price_usd is not None:
+        gpu_prices = pricing.fetch_gpu_prices()
+        prices_map = {}
+        for gpu_id in spec.pod.gpu_order:
+            price = pricing.select_price_for_pod(
+                gpu_prices,
+                gpu_id=gpu_id,
+                cloud_type=spec.pod.cloud_type,
+                spot=spec.pod.spot,
+            )
+            if price is not None:
+                prices_map[gpu_id] = price
     return select_gpu_across_datacenters(
         datacenters_payload,
         datacenters=spec.pod.datacenters,
         gpu_order=spec.pod.gpu_order,
         on_failover=on_failover,
+        prices=prices_map,
+        max_gpu_price_usd=max_gpu_price_usd,
     )
 
 
