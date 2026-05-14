@@ -397,6 +397,69 @@ def _index_artifacts(value: object) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _cmd_events(args: argparse.Namespace) -> int:
+    run_dir = Path(args.run_dir)
+    if not run_dir.exists():
+        raise FileNotFoundError(f"run-dir not found: {run_dir}")
+    events = forensics.load_events(run_dir)
+    if not events:
+        logger.info(f"no events in {run_dir / forensics.EVENTS_FILENAME}")
+        return 0
+    sys.stdout.write(_format_events_timeline(events) + "\n")
+    return 0
+
+
+def _format_events_timeline(events: list[dict[str, Any]]) -> str:
+    """Render events.jsonl rows as a wall-clock timeline anchored at the first ts_utc."""
+    from datetime import datetime
+
+    def parse_ts(raw: object) -> datetime | None:
+        if not isinstance(raw, str):
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    anchor: datetime | None = None
+    for entry in events:
+        ts = parse_ts(entry.get("ts_utc"))
+        if ts is not None:
+            anchor = ts
+            break
+    out_lines: list[str] = []
+    for entry in events:
+        ts = parse_ts(entry.get("ts_utc"))
+        offset_str = "[+--:--]"
+        if anchor is not None and ts is not None:
+            delta = (ts - anchor).total_seconds()
+            offset_str = _format_offset(delta)
+        event_name = str(entry.get("event") or "?")
+        fields = " ".join(
+            f"{k}={_render_event_value(v)}"
+            for k, v in entry.items()
+            if k not in {"ts_utc", "event"}
+        )
+        out_lines.append(f"{offset_str} {event_name} {fields}".rstrip())
+    return "\n".join(out_lines)
+
+
+def _format_offset(seconds: float) -> str:
+    sign = "-" if seconds < 0 else "+"
+    sec = int(abs(seconds))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"[{sign}{h}:{m:02d}:{s:02d}]"
+    return f"[{sign}{m}:{s:02d}]"
+
+
+def _render_event_value(v: object) -> str:
+    if isinstance(v, str) and (" " in v or '"' in v):
+        return f'"{v}"'
+    return str(v)
+
+
 def _cmd_capture_env(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     payload: dict[str, object] = {}
@@ -639,6 +702,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     compare_parser.add_argument("a", type=Path, help="First manifest path or run dir.")
     compare_parser.add_argument("b", type=Path, help="Second manifest path or run dir.")
 
+    events_parser = sub.add_parser(
+        "events",
+        parents=[verbosity],
+        help="Pretty-print events.jsonl as a wall-clock timeline.",
+    )
+    events_parser.add_argument(
+        "run_dir", type=Path, help="A run directory containing events.jsonl."
+    )
+
     capture_env_parser = sub.add_parser(
         "capture-env",
         parents=[verbosity],
@@ -672,6 +744,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "estimate": _cmd_estimate,
         "ls-runs": _cmd_ls_runs,
         "compare-runs": _cmd_compare_runs,
+        "events": _cmd_events,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }
