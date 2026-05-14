@@ -10,8 +10,9 @@ import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
-from runpod_deploy import metadata, preflight, pricing
+from runpod_deploy import forensics, metadata, preflight, pricing
 from runpod_deploy.config import (
     STORAGE_NETWORK_VOLUME,
     build_job_context,
@@ -238,6 +239,67 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ls_runs(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).resolve()
+    run_dirs = forensics.walk_run_dirs(project_root)
+    if args.limit is not None:
+        run_dirs = run_dirs[-args.limit :]
+    rows: list[dict[str, Any]] = []
+    for run_dir in run_dirs:
+        manifest = forensics.load_manifest(run_dir)
+        if manifest is None:
+            continue
+        rows.append(
+            {
+                "timestamp": run_dir.name,
+                "job": manifest.get("job_name"),
+                "pod_id": manifest.get("pod_id"),
+                "gpu_id": manifest.get("gpu_id"),
+                "datacenter_id": manifest.get("datacenter_id"),
+                "wall_time_sec": manifest.get("wall_time_sec"),
+                "failed": manifest.get("failed"),
+                "estimated_cost_usd": manifest.get("estimated_cost_usd"),
+            }
+        )
+    if args.json:
+        sys.stdout.write(json.dumps(rows, indent=2) + "\n")
+        return 0
+    if not rows:
+        logger.info(f"no runs found under {project_root}/artifacts/runpod/")
+        return 0
+    headers = ["timestamp", "job", "pod_id", "gpu", "dc", "wall_s", "failed", "est_$"]
+    table_rows = [
+        [
+            row["timestamp"],
+            str(row["job"] or ""),
+            str(row["pod_id"] or ""),
+            str(row["gpu_id"] or ""),
+            str(row["datacenter_id"] or ""),
+            (
+                f"{row['wall_time_sec']:.0f}"
+                if isinstance(row["wall_time_sec"], (int, float))
+                else "—"
+            ),
+            "Y" if row["failed"] else ("—" if row["failed"] is None else "N"),
+            (
+                f"${row['estimated_cost_usd']:.2f}"
+                if isinstance(row["estimated_cost_usd"], (int, float))
+                else "—"
+            ),
+        ]
+        for row in rows
+    ]
+    widths = [
+        max(len(header), max((len(r[i]) for r in table_rows), default=0))
+        for i, header in enumerate(headers)
+    ]
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    logger.info(fmt.format(*headers))
+    for r in table_rows:
+        logger.info(fmt.format(*r))
+    return 0
+
+
 def _cmd_capture_env(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     payload: dict[str, object] = {}
@@ -454,6 +516,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     estimate_parser.add_argument("config", type=Path, help="Path to a job YAML config.")
 
+    ls_runs_parser = sub.add_parser(
+        "ls-runs",
+        parents=[verbosity],
+        help="List past runs from <project_root>/artifacts/runpod/*.",
+    )
+    ls_runs_parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path("."),
+        help="Directory containing artifacts/runpod/ (defaults to cwd).",
+    )
+    ls_runs_parser.add_argument(
+        "--limit", type=int, default=None, help="Show only the N most recent runs."
+    )
+    ls_runs_parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
+    )
+
     capture_env_parser = sub.add_parser(
         "capture-env",
         parents=[verbosity],
@@ -485,6 +565,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "gpu-list": _cmd_gpu_list,
         "gpu-prices": _cmd_gpu_prices,
         "estimate": _cmd_estimate,
+        "ls-runs": _cmd_ls_runs,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }
