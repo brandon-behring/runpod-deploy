@@ -23,6 +23,7 @@ from runpod_deploy.config import (
     SshSpec,
     StopPolicySpec,
     StorageSpec,
+    TelemetrySpec,
 )
 
 __all__ = [
@@ -57,6 +58,7 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
             "run",
             "artifacts",
             "stop",
+            "telemetry",
             "variables",
         },
     )
@@ -78,6 +80,7 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
         run=_parse_run(_mapping(raw.get("run"), "run")),
         artifacts=_parse_artifacts(raw.get("artifacts", ())),
         stop=_parse_stop(_mapping(raw.get("stop", {}), "stop")),
+        telemetry=_parse_telemetry(_mapping(raw.get("telemetry", {}), "telemetry")),
         variables=_parse_str_dict(raw.get("variables", {}), "variables"),
     )
 
@@ -96,22 +99,28 @@ def _parse_pod(raw: Mapping[str, Any]) -> PodSpec:
         "pod",
         {
             "image",
-            "datacenter_id",
+            "datacenters",
             "gpu_order",
             "cloud_type",
             "ports",
             "container_disk_gb",
             "gpu_count",
+            "spot",
+            "min_vcpu_count",
+            "min_memory_gb",
         },
     )
     return PodSpec(
         image=_as_str(raw.get("image"), "pod.image"),
-        datacenter_id=_as_str(raw.get("datacenter_id"), "pod.datacenter_id"),
+        datacenters=_tuple_str(raw.get("datacenters"), "pod.datacenters"),
         gpu_order=_tuple_str(raw.get("gpu_order"), "pod.gpu_order"),
         cloud_type=_as_str(raw.get("cloud_type", "SECURE"), "pod.cloud_type"),
         ports=_tuple_str(raw.get("ports", ("22/tcp",)), "pod.ports"),
         container_disk_gb=_as_int(raw.get("container_disk_gb", 20), "pod.container_disk_gb"),
         gpu_count=_as_int(raw.get("gpu_count", 1), "pod.gpu_count"),
+        spot=_as_bool(raw.get("spot", False), "pod.spot"),
+        min_vcpu_count=_optional_int(raw.get("min_vcpu_count"), "pod.min_vcpu_count"),
+        min_memory_gb=_optional_int(raw.get("min_memory_gb"), "pod.min_memory_gb"),
     )
 
 
@@ -270,6 +279,45 @@ def _parse_stop(raw: Mapping[str, Any]) -> StopPolicySpec:
     return StopPolicySpec(
         on_success=_as_bool(raw.get("on_success", True), "stop.on_success"),
         on_failure=_as_bool(raw.get("on_failure", True), "stop.on_failure"),
+    )
+
+
+def _parse_telemetry(raw: Mapping[str, Any]) -> TelemetrySpec:
+    _check_keys(
+        raw,
+        "telemetry",
+        {
+            "enabled",
+            "sample_interval_sec",
+            "capture_nvidia_smi",
+            "capture_dmesg",
+            "capture_pod_describe",
+            "capture_remote_env",
+            "capture_local_git",
+            "capture_payload_lockfile",
+        },
+    )
+    return TelemetrySpec(
+        enabled=_as_bool(raw.get("enabled", True), "telemetry.enabled"),
+        sample_interval_sec=_as_int(
+            raw.get("sample_interval_sec", 30), "telemetry.sample_interval_sec"
+        ),
+        capture_nvidia_smi=_as_bool(
+            raw.get("capture_nvidia_smi", True), "telemetry.capture_nvidia_smi"
+        ),
+        capture_dmesg=_as_bool(raw.get("capture_dmesg", True), "telemetry.capture_dmesg"),
+        capture_pod_describe=_as_bool(
+            raw.get("capture_pod_describe", True), "telemetry.capture_pod_describe"
+        ),
+        capture_remote_env=_as_bool(
+            raw.get("capture_remote_env", True), "telemetry.capture_remote_env"
+        ),
+        capture_local_git=_as_bool(
+            raw.get("capture_local_git", True), "telemetry.capture_local_git"
+        ),
+        capture_payload_lockfile=_as_bool(
+            raw.get("capture_payload_lockfile", True), "telemetry.capture_payload_lockfile"
+        ),
     )
 
 

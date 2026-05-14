@@ -17,7 +17,7 @@ def test_offline_dry_run_walks_command_shape(
     (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
     config = tmp_path / "job.yaml"
     config.write_text("""
-schema_version: 1
+schema_version: 2
 name: demo
 state_file: ~/.runpod-demo-current
 local:
@@ -26,7 +26,7 @@ local:
     - pyproject.toml
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:

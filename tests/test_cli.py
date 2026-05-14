@@ -13,7 +13,7 @@ from tests.conftest import FakeResult, FakeSubprocess
 
 def _write_minimal_config(path: Path, *, extra: str = "") -> Path:
     path.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 local:
@@ -22,7 +22,7 @@ local:
     - pyproject.toml
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:
@@ -49,7 +49,7 @@ def test_validate_ok(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
 
     assert rc == 0
     assert "ok: " in caplog.text
-    assert "schema_version=1" in caplog.text
+    assert "schema_version=2" in caplog.text
     assert "job=demo" in caplog.text
 
 
@@ -157,13 +157,13 @@ def _write_logs_fixture_config(tmp_path: Path) -> tuple[Path, Path]:
     state_file = tmp_path / "state.json"
     config = tmp_path / "job.yaml"
     config.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 state_file: {state_file}
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:

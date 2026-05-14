@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: sdd-headline-resume
 run_id_prefix: sdd-resume
 state_file: ~/.runpod-current
@@ -10,7 +10,7 @@ variables:
   remote_venv: /workspace/.venv
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA GeForce RTX 4090
     - NVIDIA A40

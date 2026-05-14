@@ -12,14 +12,14 @@ from runpod_deploy.provider import PodConnection
 
 def _write_config_with_templated_artifacts(path: Path) -> Path:
     path.write_text("""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 variables:
   smoke_dir: /workspace/{run_id}
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:

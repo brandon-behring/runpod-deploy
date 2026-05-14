@@ -83,11 +83,11 @@ def test_resolve_volume_enforces_datacenter() -> None:
 def test_pod_create_omits_gpu_count_for_single_gpu(tmp_path: Path) -> None:
     config = tmp_path / "job.yaml"
     config.write_text("""
-schema_version: 1
+schema_version: 2
 name: demo
 pod:
   image: image
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order: ["gpu-a"]
 storage:
   mode: network_volume
@@ -112,11 +112,11 @@ run:
 def test_pod_create_uses_ephemeral_volume_gb(tmp_path: Path) -> None:
     config = tmp_path / "job.yaml"
     config.write_text("""
-schema_version: 1
+schema_version: 2
 name: demo
 pod:
   image: image
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order: ["gpu-a"]
   gpu_count: 2
 storage:

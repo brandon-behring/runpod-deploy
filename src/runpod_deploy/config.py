@@ -1,4 +1,4 @@
-"""Strict v1 YAML config loader for RunPod jobs."""
+"""Strict v2 YAML config loader for RunPod jobs."""
 
 from __future__ import annotations
 
@@ -26,12 +26,13 @@ __all__ = [
     "SshSpec",
     "StopPolicySpec",
     "StorageSpec",
+    "TelemetrySpec",
     "load_job_spec",
 ]
 
 _OCTAL_MODE_RE = re.compile(r"^0?[0-7]{3}$")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STORAGE_NETWORK_VOLUME = "network_volume"
 STORAGE_EPHEMERAL = "ephemeral"
 DEFAULT_FAILURE_MARKERS = (
@@ -56,24 +57,31 @@ class PodSpec:
     """RunPod pod provisioning settings."""
 
     image: str
-    datacenter_id: str
+    datacenters: tuple[str, ...]
     gpu_order: tuple[str, ...]
     cloud_type: str = "SECURE"
     ports: tuple[str, ...] = ("22/tcp",)
     container_disk_gb: int = 20
     gpu_count: int = 1
+    spot: bool = False
+    min_vcpu_count: int | None = None
+    min_memory_gb: int | None = None
 
     def __post_init__(self) -> None:
         if not self.image:
             raise ValueError("pod.image must be non-empty")
-        if not self.datacenter_id:
-            raise ValueError("pod.datacenter_id must be non-empty")
+        if not self.datacenters:
+            raise ValueError("pod.datacenters must contain at least one datacenter id")
         if not self.gpu_order:
             raise ValueError("pod.gpu_order must contain at least one GPU id")
         if self.container_disk_gb <= 0:
             raise ValueError(f"pod.container_disk_gb must be > 0, got {self.container_disk_gb}")
         if self.gpu_count <= 0:
             raise ValueError(f"pod.gpu_count must be > 0, got {self.gpu_count}")
+        if self.min_vcpu_count is not None and self.min_vcpu_count <= 0:
+            raise ValueError(f"pod.min_vcpu_count must be > 0, got {self.min_vcpu_count}")
+        if self.min_memory_gb is not None and self.min_memory_gb <= 0:
+            raise ValueError(f"pod.min_memory_gb must be > 0, got {self.min_memory_gb}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +292,26 @@ class StopPolicySpec:
 
 
 @dataclass(frozen=True, slots=True)
+class TelemetrySpec:
+    """Pod-side telemetry capture knobs."""
+
+    enabled: bool = True
+    sample_interval_sec: int = 30
+    capture_nvidia_smi: bool = True
+    capture_dmesg: bool = True
+    capture_pod_describe: bool = True
+    capture_remote_env: bool = True
+    capture_local_git: bool = True
+    capture_payload_lockfile: bool = True
+
+    def __post_init__(self) -> None:
+        if self.sample_interval_sec < 5:
+            raise ValueError(
+                f"telemetry.sample_interval_sec must be >= 5, got {self.sample_interval_sec}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class RunpodJobSpec:
     """Complete single-job v1 config."""
 
@@ -304,6 +332,7 @@ class RunpodJobSpec:
     secrets: tuple[SecretSpec, ...] = ()
     artifacts: tuple[ArtifactPullSpec, ...] = ()
     stop: StopPolicySpec = field(default_factory=StopPolicySpec)
+    telemetry: TelemetrySpec = field(default_factory=TelemetrySpec)
     variables: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

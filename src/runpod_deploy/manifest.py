@@ -28,7 +28,7 @@ def build_pull_manifest(
         "run_id": ctx.run_id,
         "config_path": str(ctx.config_path),
         "storage_mode": ctx.spec.storage.mode,
-        "datacenter_id": ctx.spec.pod.datacenter_id,
+        "datacenter_id": ctx.spec.pod.datacenters[0],
         "gpu_id": pod.gpu_id if pod is not None else None,
         "pod_id": pod.pod_id if pod is not None else None,
         "image": ctx.spec.pod.image,

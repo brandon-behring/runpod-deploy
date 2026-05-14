@@ -99,7 +99,7 @@ def _resolve_volume_id(spec: RunpodJobSpec, *, offline: bool) -> str | None:
     volume_id, _ = resolve_volume(
         volumes,
         volume_name=volume_name,
-        expected_datacenter_id=spec.pod.datacenter_id,
+        expected_datacenter_id=spec.pod.datacenters[0],
     )
     return volume_id
 
@@ -111,7 +111,7 @@ def _resolve_gpu_id(spec: RunpodJobSpec, *, offline: bool) -> str:
     datacenters = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
     return select_gpu_for_datacenter(
         datacenters,
-        datacenter_id=spec.pod.datacenter_id,
+        datacenter_id=spec.pod.datacenters[0],
         gpu_order=spec.pod.gpu_order,
     )
 

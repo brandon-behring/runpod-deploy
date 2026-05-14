@@ -26,13 +26,13 @@ staging:
     destination: /workspace/code
 """
     path.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 state_file: {state_file}
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA RTX A4000
 storage:
@@ -99,12 +99,12 @@ def test_check_gpu_availability_suggests_close_match_on_typo(
     )
     cfg = tmp_path / "job.yaml"
     cfg.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 state_file: {tmp_path / "state.json"}
 pod:
   image: runpod/pytorch
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA RTX A4OOO
 storage:

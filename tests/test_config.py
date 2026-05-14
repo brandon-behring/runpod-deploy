@@ -9,7 +9,7 @@ from runpod_deploy.config import build_job_context, load_job_spec, validate_loca
 
 def _write_minimal_config(path: Path, *, extra: str = "") -> Path:
     path.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 local:
@@ -18,7 +18,7 @@ local:
     - pyproject.toml
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:
@@ -76,12 +76,12 @@ def test_examples_are_schema_valid() -> None:
 def test_run_spec_accepts_templated_script_path(tmp_path: Path) -> None:
     config = tmp_path / "job.yaml"
     config.write_text("""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 storage:

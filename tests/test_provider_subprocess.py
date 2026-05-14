@@ -19,13 +19,13 @@ from tests.conftest import FakeResult, FakeSubprocess
 
 def _write_min_config(path: Path, *, state_file: Path) -> Path:
     path.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 state_file: {state_file}
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA RTX A4000
 storage:

@@ -62,7 +62,7 @@ def _write_full_config(
 
     config = tmp_path / "job.yaml"
     config.write_text(f"""
-schema_version: 1
+schema_version: 2
 name: demo
 run_id_prefix: demo
 state_file: {state_file}
@@ -72,7 +72,7 @@ ssh:
   key_path: {ssh_key}
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
 {storage_block}budget:

@@ -111,7 +111,7 @@ def _build_pod_create_argv(ctx: JobContext, *, volume_id: str | None, gpu_id: st
             "--image",
             spec.pod.image,
             "--data-center-ids",
-            spec.pod.datacenter_id,
+            spec.pod.datacenters[0],
             "--volume-mount-path",
             spec.storage.volume_mount,
             f"--cloud-type={spec.pod.cloud_type}",

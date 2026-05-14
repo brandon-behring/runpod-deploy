@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: a4000-smoke
 run_id_prefix: smoke
 state_file: ~/.runpod-smoke-current
@@ -13,7 +13,7 @@ variables:
 
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: EU-RO-1
+  datacenters: [EU-RO-1]
   gpu_order:
     - NVIDIA RTX A4000
     - NVIDIA RTX A4500

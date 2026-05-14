@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 name: research-kb-pdf-embed-gpu
 run_id_prefix: research-kb-gpu
 local:
@@ -9,7 +9,7 @@ variables:
   remote_venv: /workspace/.venv-research-kb
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
-  datacenter_id: US-MD-1
+  datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA L40S
     - NVIDIA RTX 6000 Ada
