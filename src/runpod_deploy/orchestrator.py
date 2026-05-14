@@ -353,36 +353,44 @@ def _push_workspace(runner: RemoteRunner, ctx: JobContext) -> None:
 
 def _launch_remote_job(runner: RemoteRunner, ctx: JobContext) -> None:
     run = ctx.spec.run
+    # Render template variables (built-ins + YAML + CLI --var) in all
+    # path-like and marker fields. `run.body` is already template-aware;
+    # the others gain template support here so a {seed} / {backbone} /
+    # {project_root} in run.script_path / log_path is expanded the same
+    # way as in run.body or staging paths. See MIGRATION.md §"Behavioral
+    # changes".
     payload = ctx.render(run.body)
+    script_path = ctx.render(run.script_path)
+    log_path = ctx.render(run.log_path)
     create = (
-        f"cat > {shlex.quote(run.script_path)} <<'BASH'\n"
+        f"cat > {shlex.quote(script_path)} <<'BASH'\n"
         f"{payload}\n"
-        f"BASH\nchmod +x {shlex.quote(run.script_path)}"
+        f"BASH\nchmod +x {shlex.quote(script_path)}"
     )
     runner.ssh_exec(create, timeout_sec=60, check=True)
-    runner.ssh_exec(f"rm -f {shlex.quote(run.log_path)}", timeout_sec=30, check=True)
+    runner.ssh_exec(f"rm -f {shlex.quote(log_path)}", timeout_sec=30, check=True)
     runner.ssh_exec_detached(
-        f"nohup bash {shlex.quote(run.script_path)} > {shlex.quote(run.log_path)} 2>&1 < /dev/null"
+        f"nohup bash {shlex.quote(script_path)} > {shlex.quote(log_path)} 2>&1 < /dev/null"
     )
     for _ in range(20):
-        result = runner.ssh_exec(
-            f"test -f {shlex.quote(run.log_path)}", timeout_sec=10, check=False
-        )
+        result = runner.ssh_exec(f"test -f {shlex.quote(log_path)}", timeout_sec=10, check=False)
         if result.returncode == 0:
-            logger.info(f"[remote] log created: {run.log_path}")
+            logger.info(f"[remote] log created: {log_path}")
             return
         time.sleep(1)
-    raise RuntimeError(f"remote job did not create {run.log_path}")
+    raise RuntimeError(f"remote job did not create {log_path}")
 
 
 def _monitor_remote_log(
     runner: RemoteRunner, ctx: JobContext, *, tel: TelemetrySession | None = None
 ) -> None:
     run = ctx.spec.run
+    log_path = ctx.render(run.log_path)
+    success_marker = ctx.render(run.success_marker)
     deadline = time.time() + ctx.spec.budget.timeout_sec
     logger.info(
-        f"[monitor] polling {run.log_path}; "
-        f"timeout={ctx.spec.budget.timeout_sec // 60}m success={run.success_marker!r}"
+        f"[monitor] polling {log_path}; "
+        f"timeout={ctx.spec.budget.timeout_sec // 60}m success={success_marker!r}"
     )
     if runner.dry_run:
         runner.ssh_exec(_log_status_command(ctx), timeout_sec=30, check=False)
@@ -488,7 +496,7 @@ def _pull_remote_log(
     runner: RemoteRunner, ctx: JobContext, *, tel: TelemetrySession | None = None
 ) -> None:
     """Rsync the remote run.log_path into run_dir/run.log. Logs WARNING on failure."""
-    log_path = ctx.spec.run.log_path
+    log_path = ctx.render(ctx.spec.run.log_path)
     try:
         runner.rsync_pull(
             remote_path=log_path,
@@ -514,10 +522,11 @@ def _remote_env_prefix(ctx: JobContext) -> str:
 
 def _log_status_command(ctx: JobContext) -> str:
     run = ctx.spec.run
-    success = shlex.quote(run.success_marker)
-    log = shlex.quote(run.log_path)
+    success = shlex.quote(ctx.render(run.success_marker))
+    log = shlex.quote(ctx.render(run.log_path))
     failure_checks = " || ".join(
-        f"grep -F {shlex.quote(marker)} {log} >/dev/null 2>&1" for marker in run.failure_markers
+        f"grep -F {shlex.quote(ctx.render(marker))} {log} >/dev/null 2>&1"
+        for marker in run.failure_markers
     )
     return (
         f"tail -n 80 {log} 2>/dev/null || true; "

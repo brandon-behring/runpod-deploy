@@ -256,3 +256,46 @@ def test_build_job_context_empty_cli_variables_no_effect(tmp_path: Path) -> None
         "volume_mount",
     }
     assert user_keys == set()
+
+
+@pytest.mark.unit
+def test_run_path_fields_render_cli_variables(tmp_path: Path) -> None:
+    """`run.script_path` / `run.log_path` / `run.success_marker` get CLI-var expansion.
+
+    Regression for the v0.3.2 bug where MIGRATION.md promised template
+    support for ``run.script_path`` / ``run.log_path`` but the orchestrator
+    used the raw strings literally — so ``{seed}`` survived as a literal
+    sub-string in pod-side ssh commands and the polling marker.
+    """
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("""
+schema_version: 2
+name: demo
+run_id_prefix: demo
+local:
+  project_root: .
+  required_paths: []
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/run-s{seed}.sh
+  log_path: /workspace/run-s{seed}.log
+  success_marker: "job-s{seed} DONE"
+  body: |
+    echo job-s{seed} DONE
+""")
+    spec = load_job_spec(config_path)
+    # Spec values are stored raw (bug was in *use*, not *parse*).
+    assert spec.run.script_path == "/workspace/run-s{seed}.sh"
+    assert spec.run.log_path == "/workspace/run-s{seed}.log"
+    assert spec.run.success_marker == "job-s{seed} DONE"
+    # Rendering with --var seed=42 expands.
+    ctx = build_job_context(spec, config_path, cli_variables={"seed": "42"})
+    assert ctx.render(spec.run.script_path) == "/workspace/run-s42.sh"
+    assert ctx.render(spec.run.log_path) == "/workspace/run-s42.log"
+    assert ctx.render(spec.run.success_marker) == "job-s42 DONE"
