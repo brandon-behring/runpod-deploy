@@ -19,7 +19,7 @@ from runpod_deploy.config import (
     validate_local_paths,
 )
 from runpod_deploy.orchestrator import run_job
-from runpod_deploy.provider import run_json, stop_pod
+from runpod_deploy.provider import run_json, select_gpu_across_datacenters, stop_pod
 from runpod_deploy.transport import RemoteRunner
 
 __all__ = ["main"]
@@ -144,6 +144,72 @@ def _cmd_gpu_prices(args: argparse.Namespace) -> int:
 def _maybe_fetch_prices(*, force_refresh: bool) -> dict[str, pricing.GpuPrice]:
     """Fetch prices; return empty dict on any failure (already WARN'd by pricing.py)."""
     return pricing.fetch_gpu_prices(force_refresh=force_refresh)
+
+
+def _cmd_estimate(args: argparse.Namespace) -> int:
+    spec = load_job_spec(args.config)
+    datacenters_payload = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
+    raw_prices = _maybe_fetch_prices(force_refresh=False)
+    prices_map: dict[str, float] = {}
+    for gpu_id in spec.pod.gpu_order:
+        price = pricing.select_price_for_pod(
+            raw_prices,
+            gpu_id=gpu_id,
+            cloud_type=spec.pod.cloud_type,
+            spot=spec.pod.spot,
+        )
+        if price is not None:
+            prices_map[gpu_id] = price
+    failover_log: list[str] = []
+    try:
+        gpu_id, datacenter_id = select_gpu_across_datacenters(
+            datacenters_payload,
+            datacenters=spec.pod.datacenters,
+            gpu_order=spec.pod.gpu_order,
+            prices=prices_map or None,
+            on_failover=lambda failed, _nxt, reason: failover_log.append(f"  - {failed}: {reason}"),
+        )
+    except RuntimeError as exc:
+        logger.error(f"[estimate] cannot pick a GPU: {exc}")
+        for line in failover_log:
+            logger.error(line)
+        return 1
+    selected_price = prices_map.get(gpu_id)
+    cloud_label = f"{spec.pod.cloud_type.lower()}{'-spot' if spec.pod.spot else ''}"
+    logger.info(f"config:         {args.config}")
+    logger.info(f"job:            {spec.name}")
+    logger.info(f"selected:       {gpu_id} in {datacenter_id}")
+    if selected_price is not None:
+        logger.info(f"price source:   graphql ({cloud_label})")
+        logger.info(f"$/hr:           ${selected_price:.2f}")
+    else:
+        logger.info(
+            "price source:   assumed_rate (graphql price unavailable; "
+            "actual cost will come from pod_describe at deploy time)"
+        )
+        logger.info(f"$/hr:           ${spec.budget.assumed_hourly_rate_usd:.2f} (assumed)")
+    rate_used = (
+        selected_price if selected_price is not None else spec.budget.assumed_hourly_rate_usd
+    )
+    timeout_sec = spec.budget.timeout_sec
+    timeout_min = timeout_sec / 60
+    spend_at_timeout = rate_used * timeout_sec / 3600
+    runtime_at_cap_sec = (spec.budget.cost_cap_usd / rate_used) * 3600 if rate_used > 0 else 0
+    runtime_at_cap_min = runtime_at_cap_sec / 60
+    logger.info("budget:")
+    logger.info(f"  cost_cap_usd:    {spec.budget.cost_cap_usd:.2f}")
+    logger.info(f"  assumed_rate:    {spec.budget.assumed_hourly_rate_usd:.2f}/hr")
+    logger.info(f"  timeout:         {timeout_sec}s ({timeout_min:.1f} min)")
+    logger.info(f"forecast at ${rate_used:.2f}/hr:")
+    logger.info(f"  spend at budget.timeout_sec:    ${spend_at_timeout:.2f}")
+    logger.info(
+        f"  runtime at cost_cap ceiling:    ~{runtime_at_cap_sec:.0f}s ({runtime_at_cap_min:.0f} min)"
+    )
+    if failover_log:
+        logger.info("failover events during selection:")
+        for line in failover_log:
+            logger.info(line)
+    return 0
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -381,6 +447,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Bypass the on-disk price cache and force a fresh GraphQL request.",
     )
 
+    estimate_parser = sub.add_parser(
+        "estimate",
+        parents=[verbosity],
+        help="Predict cost for a config: walks GPU/DC selection with live prices.",
+    )
+    estimate_parser.add_argument("config", type=Path, help="Path to a job YAML config.")
+
     capture_env_parser = sub.add_parser(
         "capture-env",
         parents=[verbosity],
@@ -411,6 +484,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
         "gpu-prices": _cmd_gpu_prices,
+        "estimate": _cmd_estimate,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }
