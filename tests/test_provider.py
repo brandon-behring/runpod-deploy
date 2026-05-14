@@ -146,6 +146,89 @@ def test_select_gpu_requires_non_empty_datacenters() -> None:
 
 
 @pytest.mark.unit
+def test_select_gpu_skips_gpu_above_max_price_falls_back_to_cheaper_in_order() -> None:
+    failover_calls: list[tuple[str, str | None, str]] = []
+    payload = [
+        {
+            "id": "EU-RO-1",
+            "gpuAvailability": [
+                {"gpuId": "H100", "stockStatus": "High"},
+                {"gpuId": "A100", "stockStatus": "High"},
+            ],
+        }
+    ]
+
+    gpu_id, dc_id = select_gpu_across_datacenters(
+        payload,
+        datacenters=("EU-RO-1",),
+        gpu_order=("H100", "A100"),
+        prices={"H100": 4.18, "A100": 2.79},
+        max_gpu_price_usd=3.00,
+        on_failover=lambda f, n, r: failover_calls.append((f, n, r)),
+    )
+
+    assert (gpu_id, dc_id) == ("A100", "EU-RO-1")
+    # The H100 skip emits an on_failover-shaped event reason but the DC itself succeeded,
+    # so the only failover call we expect is the per-GPU price-skip.
+    assert any("price" in call[2] and "H100" in call[2] for call in failover_calls)
+
+
+@pytest.mark.unit
+def test_select_gpu_price_filter_inactive_when_max_price_none() -> None:
+    gpu_id, _ = select_gpu_across_datacenters(
+        [{"id": "EU-RO-1", "gpuAvailability": [{"gpuId": "H100", "stockStatus": "High"}]}],
+        datacenters=("EU-RO-1",),
+        gpu_order=("H100",),
+        prices={"H100": 4.18},
+        max_gpu_price_usd=None,
+    )
+    assert gpu_id == "H100"
+
+
+@pytest.mark.unit
+def test_select_gpu_price_filter_allows_gpu_missing_from_prices_map() -> None:
+    # Absent price = unknown, treated as "allow" (errs on the side of letting the run proceed).
+    gpu_id, _ = select_gpu_across_datacenters(
+        [{"id": "EU-RO-1", "gpuAvailability": [{"gpuId": "H100", "stockStatus": "High"}]}],
+        datacenters=("EU-RO-1",),
+        gpu_order=("H100",),
+        prices={},  # H100 not in map
+        max_gpu_price_usd=3.00,
+    )
+    assert gpu_id == "H100"
+
+
+@pytest.mark.unit
+def test_select_gpu_price_filter_exhausts_gpu_order_then_fails_over_to_next_dc() -> None:
+    failover_calls: list[tuple[str, str | None, str]] = []
+    payload = [
+        {
+            "id": "DC-A",
+            "gpuAvailability": [{"gpuId": "H100", "stockStatus": "High"}],
+        },
+        {
+            "id": "DC-B",
+            "gpuAvailability": [{"gpuId": "A100", "stockStatus": "High"}],
+        },
+    ]
+
+    gpu_id, dc_id = select_gpu_across_datacenters(
+        payload,
+        datacenters=("DC-A", "DC-B"),
+        gpu_order=("H100", "A100"),
+        prices={"H100": 9.99, "A100": 1.50},
+        max_gpu_price_usd=2.00,
+        on_failover=lambda f, n, r: failover_calls.append((f, n, r)),
+    )
+
+    assert (gpu_id, dc_id) == ("A100", "DC-B")
+    # Two on_failover events expected: H100 priced out in DC-A; DC-A exhausted (no A100 there).
+    reasons = [call[2] for call in failover_calls]
+    assert any("price" in r and "H100" in r for r in reasons)
+    assert any("no configured GPU available in DC-A" in r for r in reasons)
+
+
+@pytest.mark.unit
 def test_resolve_volume_enforces_datacenter() -> None:
     with pytest.raises(RuntimeError, match="expected EU-RO-1"):
         resolve_volume(

@@ -6,7 +6,7 @@ import json
 import logging
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,14 +41,23 @@ def select_gpu_across_datacenters(
     datacenters: Sequence[str],
     gpu_order: Sequence[str],
     on_failover: Callable[[str, str | None, str], None] | None = None,
+    prices: Mapping[str, float] | None = None,
+    max_gpu_price_usd: float | None = None,
 ) -> tuple[str, str]:
     """Select first available (gpu_id, datacenter_id) across the failover list.
 
     Iterates ``datacenters`` in order; within each DC iterates ``gpu_order``
     and returns the first GPU with non-empty/non-"out" stock. When a DC
     yields no match, calls ``on_failover(failed_dc, next_dc, reason)``
-    before moving on. Raises RuntimeError when nothing matches across
-    all DCs.
+    before moving on.
+
+    When both ``prices`` (a ``{gpu_id: usd_per_hour}`` map) and
+    ``max_gpu_price_usd`` are supplied, GPUs whose price exceeds the
+    ceiling are skipped (with a per-GPU ``on_failover`` event reason
+    ``"price > $X.XX/hr"``). GPUs missing from ``prices`` are NOT
+    skipped — absent price data is treated as "unknown, allow."
+
+    Raises RuntimeError when nothing matches across all DCs.
     """
     if not datacenters:
         raise ValueError("datacenters must contain at least one id")
@@ -75,8 +84,18 @@ def select_gpu_across_datacenters(
         last_observed[dc_id] = by_id
         for gpu_id in gpu_order:
             stock = by_id.get(gpu_id, "")
-            if stock and stock.lower() not in {"none", "unavailable", "out"}:
-                return gpu_id, dc_id
+            if not stock or stock.lower() in {"none", "unavailable", "out"}:
+                continue
+            if max_gpu_price_usd is not None and prices is not None:
+                price = prices.get(gpu_id)
+                if price is not None and price > max_gpu_price_usd:
+                    if on_failover is not None:
+                        reason = (
+                            f"{gpu_id!r} price ${price:.2f}/hr > ${max_gpu_price_usd:.2f}/hr cap"
+                        )
+                        on_failover(dc_id, next_dc, reason)
+                    continue
+            return gpu_id, dc_id
         reason = f"no configured GPU available in {dc_id}; observed={by_id}"
         if on_failover is not None:
             on_failover(dc_id, next_dc, reason)
