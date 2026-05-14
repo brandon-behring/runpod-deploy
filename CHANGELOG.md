@@ -4,6 +4,39 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`run.script_path` / `run.log_path` / `run.success_marker` /
+  `run.failure_markers` now get template-variable expansion.** Previously
+  these fields were stored raw and used literally in `orchestrator.py`,
+  so a `{seed}` / `{backbone}` placeholder survived as a literal
+  substring in pod-side ssh commands and the polling marker — breaking
+  multi-shard sweeps that try to disambiguate per-pod script/log paths
+  via `--var seed=N`. `MIGRATION.md` had promised template support for
+  `run.script_path` and `run.log_path` since v0.2.0 but the wiring was
+  missing.
+
+  Fix: render through `ctx.render(...)` at every use site in
+  `orchestrator._launch_remote_job` (4 sites: rm-log, ssh-detached
+  bash-exec, test-f, success marker), `_monitor_remote_log` (polling
+  log line), `_pull_remote_log` (rsync target), and `_log_status_command`
+  (grep markers). `run.body` was already rendered; this brings the other
+  4 fields into parity.
+
+  1 new regression test (`tests/test_var_flag.py::test_run_path_fields_
+  render_cli_variables`) that loads a YAML with `{seed}` in all four
+  fields, parses (asserts raw storage), then `ctx.render(...)` expands
+  the CLI `--var seed=42` correctly.
+
+  Surfaced by `prompt-injection-v5` v0.2 sweep work: the canonical
+  YAML uses `run.script_path: /workspace/run-s{seed}.sh` so parallel
+  pods write to disjoint paths. Without this fix, the literal
+  `s{seed}` ended up in the pod-side ssh command and the runpod-deploy
+  monitor never matched the rendered success marker against the
+  rendered log.
+
+  221 tests pass; mypy --strict clean.
+
 ## [0.3.2] - 2026-05-14 — runpodctl flag feature-detection
 
 ### Fixed
