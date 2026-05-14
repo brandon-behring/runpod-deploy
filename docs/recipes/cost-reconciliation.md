@@ -1,0 +1,78 @@
+# Recipe: cost reconciliation across past runs
+
+**Pattern:** read `wall_time_sec`, `gpu_price_per_hour_usd`,
+`gpu_price_source`, and `estimated_cost_usd` from past
+`runpod_deploy_pull_manifest.json` files to validate that the
+`budget.assumed_hourly_rate_usd` you set in YAML is realistic, and to
+catch cost drift across runs.
+
+## Why this matters
+
+`budget.cost_cap_usd` × `assumed_hourly_rate_usd` derives the implicit
+runtime ceiling that the orchestrator enforces (see `BudgetSpec.timeout_sec`).
+If your assumed rate is much lower than the captured `costPerHr`, jobs
+hit the timeout before reaching their cost cap; if much higher, you're
+over-paying for headroom.
+
+The v2 manifest captures *both* the assumed rate (implicit in
+`cost_cap_usd` budgeting) and the actual `costPerHr` parsed from
+`runpodctl pod get` (`gpu_price_per_hour_usd` with
+`gpu_price_source: pod_describe`). Comparing the two gives you data to
+tune.
+
+## One-shot inspection of the latest run
+
+```sh
+LATEST=$(ls -dt artifacts/runpod/*/ | head -1)
+runpod-deploy manifest-summary "$LATEST/runpod_deploy_pull_manifest.json"
+```
+
+Look at the `wall_time_sec`, `price_usd/hr`, `est_cost_usd`, and
+`cost_cap_usd` lines. If `est_cost_usd` is much lower than
+`cost_cap_usd`, the cap is loose; if it bumps against it, you may have
+hit the timeout.
+
+## Sweep across many runs (Python)
+
+```python
+import json
+from pathlib import Path
+
+manifests = list(Path("artifacts/runpod").glob("*/runpod_deploy_pull_manifest.json"))
+for path in sorted(manifests):
+    m = json.loads(path.read_text())
+    if m.get("schema_version") != "v2":
+        continue
+    if m.get("gpu_price_source") != "pod_describe":
+        continue  # skip runs that fell back to assumed_rate
+    print(
+        f"{m['run_id']:30s}  "
+        f"gpu={m['gpu_id']:30s}  "
+        f"wall={m['wall_time_sec']:8.0f}s  "
+        f"price=${m['gpu_price_per_hour_usd']:.2f}/hr  "
+        f"est_cost=${m['estimated_cost_usd']:.2f}  "
+        f"final_state={m['pod_final_state']}"
+    )
+```
+
+This gives you a per-GPU price table over time. If your `assumed_hourly_rate_usd`
+is set at $1.65 but H100 runs consistently report $4.18, bump the
+assumed rate (which lengthens the implicit timeout) or split the GPUs
+into separate configs each with their own assumed rate.
+
+## Detecting failed/killed pods
+
+`pod_final_state` from `runpodctl pod get`'s `desiredStatus` field
+distinguishes:
+
+- `EXITED` — clean shutdown after the run (your code finished or
+  hit the success marker)
+- `RUNNING` — pod still active when manifest was written (means
+  `stop.on_*=false` and the pod was preserved)
+- Anything else (`TERMINATED`, `FAILED`, `STOPPED`) — surfaced as a
+  `pod_killed_unexpected` event in `events.jsonl`. Cross-reference
+  RunPod console history to find the cause.
+
+When a run shows `failed: true` and `pod_final_state: TERMINATED`,
+RunPod killed the pod mid-run — usually quota or capacity. Re-running
+on a different DC (multi-DC failover) avoids the same outcome next time.
