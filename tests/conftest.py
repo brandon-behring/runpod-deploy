@@ -53,10 +53,12 @@ class FakeSubprocess:
 
 @pytest.fixture
 def fake_subprocess(monkeypatch: pytest.MonkeyPatch) -> FakeSubprocess:
-    """Patch subprocess.run inside provider and transport module namespaces."""
+    """Patch subprocess.run inside provider, transport, telemetry, metadata namespaces."""
     fake = FakeSubprocess()
     monkeypatch.setattr("runpod_deploy.provider.subprocess.run", fake)
     monkeypatch.setattr("runpod_deploy.transport.subprocess.run", fake)
+    monkeypatch.setattr("runpod_deploy.telemetry.subprocess.run", fake)
+    monkeypatch.setattr("runpod_deploy.metadata.subprocess.run", fake)
     return fake
 
 

@@ -105,7 +105,25 @@ stop:
 
 
 def _enqueue_runpodctl_happy_path(fake: FakeSubprocess) -> None:
-    # Order matches orchestrator: datacenter list (GPU selection) → network-volume
+    # Predicate-routed responses for telemetry/metadata side-channel calls so the
+    # FIFO queue below stays focused on the four primary provisioning calls.
+    fake.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake.when(
+        lambda argv: bool(argv)
+        and argv[:3] == ["runpodctl", "pod", "get"]
+        and "--include-machine" in argv,
+        FakeResult(
+            stdout=json.dumps({"id": "pod-xyz", "costPerHr": 0.35, "desiredStatus": "RUNNING"})
+        ),
+    )
+    fake.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "stop"],
+        FakeResult(returncode=0),
+    )
+    # FIFO order matches orchestrator: datacenter list (GPU selection) → network-volume
     # list (volume resolution against selected DC) → pod create → pod get (ready).
     fake.enqueue(
         FakeResult(

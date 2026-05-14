@@ -5,11 +5,14 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import re
 import shlex
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
+from runpod_deploy import metadata, telemetry
 from runpod_deploy.config import (
     STORAGE_NETWORK_VOLUME,
     CommandSpec,
@@ -19,20 +22,22 @@ from runpod_deploy.config import (
     build_job_context,
     validate_local_paths,
 )
-from runpod_deploy.manifest import write_pull_manifest
+from runpod_deploy.manifest import ArtifactResult, write_pull_manifest
 from runpod_deploy.provider import (
-    PodConnection,
     provision_pod,
     resolve_volume,
     run_json,
     select_gpu_across_datacenters,
     stop_pod,
 )
+from runpod_deploy.telemetry import TelemetrySession
 from runpod_deploy.transport import RemoteRunner, RsyncTransfer
 
 __all__ = ["run_job"]
 
 logger = logging.getLogger(__name__)
+
+_STEP_MARKER_RE = re.compile(r"__RUNPOD_STEP_(START|DONE)__([\w.\-]+)__")
 
 
 def run_job(
@@ -42,13 +47,26 @@ def run_job(
     dry_run: bool = False,
     offline_dry_run: bool = False,
 ) -> None:
-    """Provision, stage, run, pull artifacts, and stop one RunPod job."""
+    """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
+
+    Linear flow (~70 lines, intentionally past the 50-line soft ceiling
+    per CLAUDE.md §8 because the body remains a single straight path):
+    metadata capture → GPU/DC selection (with failover) → provision →
+    telemetry session start → setup/preflight → launch → monitor (parsing
+    optional step markers) → telemetry capture_end → pull log + artifacts
+    (always pulls log when run started, even on failure) → stop pod →
+    write v2 manifest with all captured fields.
+    """
     if offline_dry_run:
         dry_run = True
     ctx = build_job_context(spec, config_path)
     validate_local_paths(ctx)
     _print_budget(spec)
-    gpu_id, datacenter_id = _resolve_gpu_id_and_dc(spec, offline=offline_dry_run)
+    deploy_metadata = _capture_deploy_metadata(spec, ctx)
+    pending_failover: list[dict[str, object]] = []
+    gpu_id, datacenter_id = _resolve_gpu_id_and_dc(
+        spec, offline=offline_dry_run, on_failover=_buffer_failover(pending_failover)
+    )
     volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
     pod = provision_pod(
         ctx,
@@ -63,33 +81,91 @@ def run_job(
         ssh_key=spec.ssh.resolved_key_path,
         dry_run=dry_run,
     )
+    tel = telemetry.start_session(
+        run_dir=ctx.run_dir,
+        runner=runner,
+        spec=spec.telemetry,
+        pod_id=pod.pod_id,
+        assumed_hourly_rate_usd=spec.budget.assumed_hourly_rate_usd,
+        dry_run=dry_run,
+    )
+    for event in pending_failover:
+        tel.emit_event("datacenter_failover", **event)
+    tel.emit_event("gpu_selected", gpu_id=gpu_id, datacenter_id=datacenter_id)
     failed = False
     run_started = False
+    artifact_results: list[ArtifactResult] = []
+    wall_start = time.monotonic()
     try:
         _wait_for_sshd(runner)
+        tel.capture_start()
         _run_commands(runner, ctx, spec.setup, label="setup")
         _stage_secrets(runner, ctx)
         _push_workspace(runner, ctx)
         _run_commands(runner, ctx, spec.preflight, label="preflight")
         _launch_remote_job(runner, ctx)
         run_started = True
-        _monitor_remote_log(runner, ctx)
-        _pull_artifacts(runner, ctx, failed=False, pod=pod)
+        tel.start_sampling()
+        _monitor_remote_log(runner, ctx, tel=tel)
+        tel.stop_sampling()
+        tel.capture_end()
+        artifact_results = _pull_artifacts_and_log(runner, ctx, failed=False, tel=tel)
     except Exception:
         failed = True
-        if not dry_run:
-            if run_started:
-                with contextlib.suppress(Exception):
-                    _pull_artifacts(runner, ctx, failed=True, pod=pod)
-            else:
-                logger.warning("[warn] skipping artifact pulls — run script did not execute")
+        tel.stop_sampling()
+        if not dry_run and run_started:
+            with contextlib.suppress(Exception):
+                artifact_results = _pull_artifacts_and_log(runner, ctx, failed=True, tel=tel)
+            with contextlib.suppress(Exception):
+                tel.capture_end()
+        elif not dry_run:
+            logger.warning("[warn] skipping artifact pulls — run script did not execute")
         raise
     finally:
+        wall_time_sec = time.monotonic() - wall_start
         should_stop = spec.stop.on_failure if failed else spec.stop.on_success
         if should_stop:
             stop_pod(pod.pod_id, dry_run=dry_run, state_file=spec.resolved_state_file)
         elif not dry_run:
             logger.warning(f"[warn] pod preserved: {pod.pod_id}")
+        if not dry_run:
+            with contextlib.suppress(Exception):
+                write_pull_manifest(
+                    ctx,
+                    failed=failed,
+                    pod=pod,
+                    datacenter_id=datacenter_id,
+                    deploy_metadata=deploy_metadata,
+                    artifact_results=artifact_results,
+                    telemetry_files=tel.files_written,
+                    wall_time_sec=wall_time_sec,
+                    gpu_price_per_hour_usd=tel.gpu_price_per_hour_usd,
+                    gpu_price_source=tel.gpu_price_source,
+                    pod_final_state=tel.pod_final_state,
+                )
+
+
+def _capture_deploy_metadata(spec: RunpodJobSpec, ctx: JobContext) -> dict[str, object]:
+    """Auto-capture local git + payload lockfile metadata pre-provisioning."""
+    payload: dict[str, object] = {}
+    project_root = Path(ctx.variables["project_root"])
+    if spec.telemetry.capture_local_git:
+        payload.update(metadata.capture_local_git(project_root))
+    if spec.telemetry.capture_payload_lockfile:
+        payload.update(metadata.capture_payload_lockfile(project_root))
+    return payload
+
+
+def _buffer_failover(
+    pending: list[dict[str, object]],
+) -> Callable[[str, str | None, str], None]:
+    """Build an on_failover callback that buffers events for later telemetry replay."""
+
+    def callback(failed_dc: str, next_dc: str | None, reason: str) -> None:
+        pending.append({"from": failed_dc, "to": next_dc, "reason": reason})
+        logger.warning(f"[failover] {failed_dc!r} -> {next_dc!r}: {reason}")
+
+    return callback
 
 
 def _resolve_volume_id(spec: RunpodJobSpec, *, datacenter_id: str, offline: bool) -> str | None:
@@ -110,7 +186,12 @@ def _resolve_volume_id(spec: RunpodJobSpec, *, datacenter_id: str, offline: bool
     return volume_id
 
 
-def _resolve_gpu_id_and_dc(spec: RunpodJobSpec, *, offline: bool) -> tuple[str, str]:
+def _resolve_gpu_id_and_dc(
+    spec: RunpodJobSpec,
+    *,
+    offline: bool,
+    on_failover: Callable[[str, str | None, str], None] | None = None,
+) -> tuple[str, str]:
     """Pick (gpu_id, datacenter_id) for provisioning across the configured DCs."""
     if offline:
         return spec.pod.gpu_order[0], spec.pod.datacenters[0]
@@ -119,6 +200,7 @@ def _resolve_gpu_id_and_dc(spec: RunpodJobSpec, *, offline: bool) -> tuple[str, 
         datacenters_payload,
         datacenters=spec.pod.datacenters,
         gpu_order=spec.pod.gpu_order,
+        on_failover=on_failover,
     )
 
 
@@ -266,7 +348,9 @@ def _launch_remote_job(runner: RemoteRunner, ctx: JobContext) -> None:
     raise RuntimeError(f"remote job did not create {run.log_path}")
 
 
-def _monitor_remote_log(runner: RemoteRunner, ctx: JobContext) -> None:
+def _monitor_remote_log(
+    runner: RemoteRunner, ctx: JobContext, *, tel: TelemetrySession | None = None
+) -> None:
     run = ctx.spec.run
     deadline = time.time() + ctx.spec.budget.timeout_sec
     logger.info(
@@ -277,11 +361,14 @@ def _monitor_remote_log(runner: RemoteRunner, ctx: JobContext) -> None:
         runner.ssh_exec(_log_status_command(ctx), timeout_sec=30, check=False)
         logger.info("[dry-run] skipping monitor loop")
         return
+    seen_step_markers: set[tuple[str, str]] = set()
     while time.time() < deadline:
         status = runner.ssh_exec(_log_status_command(ctx), timeout_sec=30, check=False)
         stdout = status.stdout.strip()
         if stdout:
             logger.info(stdout[-4000:])
+            if tel is not None:
+                _emit_step_marker_events(tel, stdout, seen_step_markers)
         if "__RUNPOD_DEPLOY_DONE__" in stdout:
             return
         if "__RUNPOD_DEPLOY_FAIL__" in stdout:
@@ -292,15 +379,39 @@ def _monitor_remote_log(runner: RemoteRunner, ctx: JobContext) -> None:
     )
 
 
-def _pull_artifacts(
+def _emit_step_marker_events(
+    tel: TelemetrySession, log_text: str, seen: set[tuple[str, str]]
+) -> None:
+    """Opt-in `__RUNPOD_STEP_START/DONE__name__` marker parsing.
+
+    Each unique (kind, name) pair is emitted once. Consumers compute
+    durations from ts_utc deltas in events.jsonl.
+    """
+    for match in _STEP_MARKER_RE.finditer(log_text):
+        kind, name = match.group(1), match.group(2)
+        key = (kind, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        event = "remote_step_started" if kind == "START" else "remote_step_completed"
+        tel.emit_event(event, name=name)
+
+
+def _pull_artifacts_and_log(
     runner: RemoteRunner,
     ctx: JobContext,
     *,
     failed: bool,
-    pod: PodConnection | None,
-) -> None:
+    tel: TelemetrySession | None = None,
+) -> list[ArtifactResult]:
+    """Pull the remote run.log first, then declared artifacts; track per-artifact result."""
+    _pull_remote_log(runner, ctx, tel=tel)
+    results: list[ArtifactResult] = []
     for artifact in ctx.spec.artifacts:
         required = artifact.required and not failed
+        if tel is not None:
+            tel.emit_event("artifact_pull_started", label=artifact.label)
+        start = time.monotonic()
         try:
             runner.rsync_pull(
                 remote_path=ctx.render(artifact.remote_path),
@@ -309,11 +420,59 @@ def _pull_artifacts(
                 delete=artifact.delete,
             )
         except Exception as exc:
+            duration = time.monotonic() - start
+            if tel is not None:
+                tel.emit_event(
+                    "artifact_pull_failed",
+                    label=artifact.label,
+                    duration_sec=round(duration, 3),
+                    error=str(exc)[:500],
+                )
+            results.append(
+                ArtifactResult(
+                    label=artifact.label,
+                    status="failed",
+                    duration_sec=round(duration, 3),
+                    error=str(exc)[:500],
+                )
+            )
             if required:
                 raise
             logger.warning(f"[warn] optional pull skipped for {artifact.remote_path}: {exc}")
-    if not runner.dry_run:
-        write_pull_manifest(ctx, failed=failed, pod=pod)
+            continue
+        duration = time.monotonic() - start
+        if tel is not None:
+            tel.emit_event(
+                "artifact_pull_completed",
+                label=artifact.label,
+                duration_sec=round(duration, 3),
+            )
+        results.append(
+            ArtifactResult(
+                label=artifact.label,
+                status="success",
+                duration_sec=round(duration, 3),
+            )
+        )
+    return results
+
+
+def _pull_remote_log(
+    runner: RemoteRunner, ctx: JobContext, *, tel: TelemetrySession | None = None
+) -> None:
+    """Rsync the remote run.log_path into run_dir/run.log. Logs WARNING on failure."""
+    log_path = ctx.spec.run.log_path
+    try:
+        runner.rsync_pull(
+            remote_path=log_path,
+            local_path=ctx.run_dir,
+            excludes=(),
+            delete=False,
+        )
+    except Exception as exc:
+        logger.warning(f"[warn] failed to pull remote log {log_path}: {exc}")
+        if tel is not None:
+            tel.emit_event("remote_log_pull_failed", path=log_path, error=str(exc)[:500])
 
 
 def _remote_env_prefix(ctx: JobContext) -> str:
