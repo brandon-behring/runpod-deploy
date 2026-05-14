@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runpod-deploy"
-version = "0.2.0"
+version = "0.3.0"
 description = "Config-driven RunPod orchestration for reusable GPU project deployments."
 readme = "README.md"
 license = "MIT"
@@ -98,7 +98,7 @@ source = ["src/runpod_deploy"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 81
 show_missing = true
 exclude_lines = [
     "pragma: no cover",

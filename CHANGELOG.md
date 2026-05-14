@@ -4,6 +4,82 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-14
+
+### Added (v0.3.0 — pricing intelligence + forensic navigation)
+
+Closes the v0.2.0 deferral on cost intelligence and adds the
+"data → answers" tooling for the telemetry v0.2.0 captures.
+
+**Pricing (theme A):**
+- New `src/runpod_deploy/pricing.py` — stdlib `urllib.request` POST
+  to `https://api.runpod.io/graphql` (auth: `Authorization: Bearer
+  $RUNPOD_API_KEY`) for the `gpuTypes` query. On-disk cache at
+  `~/.cache/runpod-deploy/prices.json` with a 1-hour TTL — survives
+  between CLI invocations.
+- `GpuPrice` frozen slotted dataclass with `secure_price`,
+  `community_price`, `secure_spot_price`, `community_spot_price`,
+  `lowest_price`. `select_price_for_pod(prices, *, gpu_id, cloud_type,
+  spot)` helper picks the field given `pod.cloud_type` and `pod.spot`.
+- `provider.select_gpu_across_datacenters` gains
+  `prices: Mapping[str, float] | None` and `max_gpu_price_usd: float
+  | None` params. GPUs above the ceiling are skipped via the existing
+  `on_failover` callback (per-GPU event reason
+  `"'<gpu>' price $X.XX/hr > $Y.YY/hr cap"`). GPUs missing from the
+  prices map are NOT skipped — absent price is "unknown, allow."
+- New `runpod-deploy gpu-prices [--cloud-type SECURE|COMMUNITY]
+  [--spot] [--no-price-cache]` — sortable price table; exit 1 when
+  no prices come back (auth/network gate).
+- `gpu-list` gains a `$/hr` column when prices are available; new
+  `--cloud-type` / `--spot` / `--no-prices` flags. Falls back to the
+  v0.2.x stock-only table when prices unavailable.
+- `run` gains `--max-gpu-price <float>`. When set, orchestrator
+  fetches prices, builds the per-GPU price map for `pod.gpu_order`
+  via `select_price_for_pod`, and threads through to
+  `select_gpu_across_datacenters`.
+- New `runpod-deploy estimate <config>` — walks the GPU/DC selection
+  exactly as `run` would (live `runpodctl datacenter list` + GraphQL
+  prices) and prints the predicted spend at `budget.timeout_sec` plus
+  the implicit timeout from `cost_cap_usd / price`. Falls back to
+  `budget.assumed_hourly_rate_usd` when prices unavailable.
+
+**Forensic navigation (theme B1–B3):**
+- New `src/runpod_deploy/forensics.py` — read-only helpers:
+  `walk_run_dirs(project_root)`, `load_manifest(path)` (handles v1
+  + v2; accepts file or dir), `load_events(run_dir)` (parses
+  events.jsonl line-by-line, skipping malformed lines with WARNING).
+- New `runpod-deploy ls-runs [--project-root .] [--limit N] [--json]`
+  — sortable table of past runs from
+  `<root>/artifacts/runpod/*/runpod_deploy_pull_manifest.json`.
+- New `runpod-deploy compare-runs <a> <b>` — side-by-side manifest
+  diff with `==` for unchanged fields and `→` for changes. Compares
+  top-level + `deploy_metadata.*` + per-`artifact[label]` fields.
+  Exit 1 when either manifest reports `failed=true` so the command
+  can gate CI checks.
+- New `runpod-deploy events <run-dir>` — pretty-prints
+  `events.jsonl` as a wall-clock timeline anchored at the first
+  `ts_utc` (`[+M:SS]` / `[+H:MM:SS]` offset format).
+
+**Deferred to v0.3.0.1** (per the planned roadmap): `metrics`
+sparkline + `why-failed` triage classifier — design after using
+v0.3.0 forensic navigation against real failures for a few weeks.
+
+### Changed (v0.3.0)
+
+- `select_gpu_across_datacenters` signature is additive (new keyword-
+  only `prices` and `max_gpu_price_usd` params with defaults); existing
+  callers still work.
+- `cli._cmd_gpu_list` output gains an additional `$/hr` column
+  conditional on price availability; existing column layout unchanged
+  when `--no-prices` is passed or prices unavailable.
+- Coverage gate `fail_under` 80 → 81 per CLAUDE.md §13
+  (`floor(86.70) − 5`).
+
+### Re-exports
+
+`runpod_deploy.__init__` re-exports `GpuPrice`, `fetch_gpu_prices`,
+`select_price_for_pod` for embedded consumers.
+
 ## [0.2.0] - 2026-05-14
 
 ### Added (v0.2.0 — own deployment primitives, expose recipes)
