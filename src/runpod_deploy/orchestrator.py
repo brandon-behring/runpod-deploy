@@ -46,6 +46,8 @@ def run_job(
     config_path: Path | str,
     dry_run: bool = False,
     offline_dry_run: bool = False,
+    gpu_id_override: str | None = None,
+    datacenter_id_override: str | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -64,9 +66,13 @@ def run_job(
     _print_budget(spec)
     deploy_metadata = _capture_deploy_metadata(spec, ctx)
     pending_failover: list[dict[str, object]] = []
-    gpu_id, datacenter_id = _resolve_gpu_id_and_dc(
-        spec, offline=offline_dry_run, on_failover=_buffer_failover(pending_failover)
-    )
+    if gpu_id_override is not None and datacenter_id_override is not None:
+        gpu_id, datacenter_id = gpu_id_override, datacenter_id_override
+        logger.info(f"[gpu] CLI override: gpu_id={gpu_id!r} datacenter_id={datacenter_id!r}")
+    else:
+        gpu_id, datacenter_id = _resolve_gpu_id_and_dc(
+            spec, offline=offline_dry_run, on_failover=_buffer_failover(pending_failover)
+        )
     volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
     pod = provision_pod(
         ctx,

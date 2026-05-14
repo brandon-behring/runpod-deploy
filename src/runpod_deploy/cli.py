@@ -11,8 +11,13 @@ from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from runpod_deploy import preflight
-from runpod_deploy.config import build_job_context, load_job_spec, validate_local_paths
+from runpod_deploy import metadata, preflight
+from runpod_deploy.config import (
+    STORAGE_NETWORK_VOLUME,
+    build_job_context,
+    load_job_spec,
+    validate_local_paths,
+)
 from runpod_deploy.orchestrator import run_job
 from runpod_deploy.provider import run_json, stop_pod
 from runpod_deploy.transport import RemoteRunner
@@ -61,6 +66,12 @@ def _level_from_args(args: argparse.Namespace) -> int:
 def _cmd_validate(args: argparse.Namespace) -> int:
     spec = load_job_spec(args.config)
     ctx = build_job_context(spec, args.config)
+    if spec.storage.mode == STORAGE_NETWORK_VOLUME and len(spec.pod.datacenters) > 1:
+        logger.warning(
+            "[validate] storage.mode=network_volume with multiple pod.datacenters: the "
+            "network volume pins the deploy to one DC, so the failover list is "
+            f"effectively single-element. datacenters={list(spec.pod.datacenters)}"
+        )
     if args.all or args.check_local:
         validate_local_paths(ctx)
     if args.all or args.check_availability:
@@ -105,13 +116,76 @@ def _cmd_run(args: argparse.Namespace) -> int:
             spec,
             budget=replace(spec.budget, max_runtime_minutes=int(args.max_runtime_minutes)),
         )
+    if (args.gpu_id is None) != (args.datacenter_id is None):
+        raise argparse.ArgumentTypeError("--gpu-id and --datacenter-id must be supplied together")
     run_job(
         spec,
         config_path=args.config,
         dry_run=bool(args.dry_run),
         offline_dry_run=bool(args.offline_dry_run),
+        gpu_id_override=args.gpu_id,
+        datacenter_id_override=args.datacenter_id,
     )
     return 0
+
+
+def _cmd_capture_env(args: argparse.Namespace) -> int:
+    project_root = Path(args.project_root).resolve()
+    payload: dict[str, object] = {}
+    payload.update(metadata.capture_local_git(project_root))
+    payload.update(metadata.capture_payload_lockfile(project_root))
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0
+
+
+def _cmd_manifest_summary(args: argparse.Namespace) -> int:
+    path = Path(args.manifest)
+    if not path.exists():
+        raise FileNotFoundError(f"manifest not found: {path}")
+    payload = json.loads(path.read_text())
+    sys.stdout.write(_format_manifest_summary(payload) + "\n")
+    return 0
+
+
+def _format_manifest_summary(m: dict[str, object]) -> str:
+    """Render a v1/v2 pull manifest as a compact key/value summary."""
+    lines = [
+        f"job:           {m.get('job_name')}",
+        f"run_id:        {m.get('run_id')}",
+        f"failed:        {m.get('failed')}",
+        f"schema:        {m.get('schema_version')}",
+        f"pod_id:        {m.get('pod_id')}",
+        f"gpu:           {m.get('gpu_id')}",
+        f"datacenter:    {m.get('datacenter_id')}",
+        f"image:         {m.get('image')}",
+        f"storage:       {m.get('storage_mode')}",
+        f"wall_time_sec: {m.get('wall_time_sec')}",
+        f"price_usd/hr:  {m.get('gpu_price_per_hour_usd')} ({m.get('gpu_price_source')})",
+        f"est_cost_usd:  {m.get('estimated_cost_usd')}",
+        f"cost_cap_usd:  {m.get('cost_cap_usd')}",
+        f"final_state:   {m.get('pod_final_state')}",
+    ]
+    metadata_block = m.get("deploy_metadata") or {}
+    if isinstance(metadata_block, dict) and metadata_block:
+        lines.append("deploy_metadata:")
+        for key, value in metadata_block.items():
+            lines.append(f"  {key}: {value}")
+    artifacts = m.get("artifacts") or []
+    if isinstance(artifacts, list) and artifacts:
+        lines.append("artifacts:")
+        for art in artifacts:
+            if not isinstance(art, dict):
+                continue
+            label = art.get("label")
+            status = art.get("status")
+            duration = art.get("duration_sec")
+            lines.append(f"  - {label}: status={status} duration_sec={duration}")
+    telemetry_files = m.get("telemetry_files") or []
+    if isinstance(telemetry_files, list) and telemetry_files:
+        lines.append("telemetry_files:")
+        for name in telemetry_files:
+            lines.append(f"  - {name}")
+    return "\n".join(lines)
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
@@ -186,6 +260,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     run_parser.add_argument("--offline-dry-run", action="store_true")
     run_parser.add_argument("--cost-cap-usd", type=float, default=None)
     run_parser.add_argument("--max-runtime-minutes", type=int, default=None)
+    run_parser.add_argument(
+        "--gpu-id",
+        type=str,
+        default=None,
+        help="Override pod.gpu_order; must be supplied with --datacenter-id.",
+    )
+    run_parser.add_argument(
+        "--datacenter-id",
+        type=str,
+        default=None,
+        help="Override pod.datacenters; must be supplied with --gpu-id.",
+    )
 
     stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
     stop_parser.add_argument("--state-file", type=Path, required=True)
@@ -209,6 +295,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     gpu_list_parser.add_argument("--datacenter", type=str, required=True)
 
+    capture_env_parser = sub.add_parser(
+        "capture-env",
+        parents=[verbosity],
+        help="Print local git + payload lockfile metadata as JSON to stdout.",
+    )
+    capture_env_parser.add_argument(
+        "--project-root",
+        type=Path,
+        default=Path("."),
+        help="Directory to inspect (defaults to cwd).",
+    )
+
+    manifest_parser = sub.add_parser(
+        "manifest-summary",
+        parents=[verbosity],
+        help="Pretty-print a runpod_deploy_pull_manifest.json (v1 or v2).",
+    )
+    manifest_parser.add_argument(
+        "manifest", type=Path, help="Path to a runpod_deploy_pull_manifest.json file."
+    )
+
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))
     handlers = {
@@ -217,6 +324,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stop": _cmd_stop,
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
+        "capture-env": _cmd_capture_env,
+        "manifest-summary": _cmd_manifest_summary,
     }
     return handlers[args.command](args)
 
