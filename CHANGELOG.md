@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-14 — runpodctl flag feature-detection
+
 ### Fixed
 
 - **`runpodctl` flag feature-detection (closes phantom-flag emission
