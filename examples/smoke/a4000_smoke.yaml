@@ -18,6 +18,7 @@ pod:
     - NVIDIA RTX A4000
     - NVIDIA RTX A4500
     - NVIDIA RTX 4000 Ada Generation
+    - NVIDIA GeForce RTX 5090
     - NVIDIA A100 80GB PCIe
 
 storage:
