@@ -10,3 +10,11 @@ build/
 dist/
 *.egg-info/
 examples/smoke/artifacts/
+
+# Secrets — never commit
+.env
+.env.local
+.env.*.local
+
+# Per-host Claude Code overrides — keep local
+.claude/settings.local.json
