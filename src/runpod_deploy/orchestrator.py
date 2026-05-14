@@ -9,7 +9,7 @@ import re
 import shlex
 import tempfile
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from runpod_deploy import metadata, pricing, telemetry
@@ -49,6 +49,7 @@ def run_job(
     gpu_id_override: str | None = None,
     datacenter_id_override: str | None = None,
     max_gpu_price_usd: float | None = None,
+    cli_variables: Mapping[str, str] | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -62,7 +63,7 @@ def run_job(
     """
     if offline_dry_run:
         dry_run = True
-    ctx = build_job_context(spec, config_path)
+    ctx = build_job_context(spec, config_path, cli_variables=cli_variables)
     validate_local_paths(ctx)
     _print_budget(spec)
     deploy_metadata = _capture_deploy_metadata(spec, ctx)

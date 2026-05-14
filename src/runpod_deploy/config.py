@@ -404,9 +404,16 @@ def build_job_context(
     spec: RunpodJobSpec,
     config_path: Path | str,
     *,
+    cli_variables: Mapping[str, str] | None = None,
     timestamp: datetime | None = None,
 ) -> JobContext:
-    """Resolve template variables for one run."""
+    """Resolve template variables for one run.
+
+    ``cli_variables`` (typically from ``runpod-deploy run --var KEY=VALUE``)
+    override the YAML ``variables:`` block on collision. They're rendered
+    against the merged dict so a CLI value may reference both built-ins
+    (``project_root``, ``run_id``, ...) and earlier YAML / CLI variables.
+    """
     config = Path(config_path).resolve()
     stamp = timestamp or datetime.now(UTC)
     run_id = stamp.strftime(f"{spec.run_id_prefix}-%Y%m%dT%H%M%SZ")
@@ -430,6 +437,9 @@ def build_job_context(
     }
     for key, value in spec.variables.items():
         variables[key] = render_template(value, variables)
+    if cli_variables:
+        for key, value in cli_variables.items():
+            variables[key] = render_template(value, variables)
     return JobContext(
         config_path=config,
         spec=spec,

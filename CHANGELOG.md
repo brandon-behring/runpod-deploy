@@ -4,6 +4,46 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added — CLI template variables (`--var` + `--vars-file`)
+
+- **`runpod-deploy run --var KEY=VALUE`** (repeatable). Sets a template
+  variable for `{KEY}` expansion in any string field of the YAML config
+  (`run.body`, `staging.destination`, `secrets.destination`, …). KEY
+  must be a valid Python identifier (letters/digits/underscore, not
+  starting with a digit); VALUE may be any string, including empty.
+  Overrides the YAML `variables:` block on collision.
+- **`runpod-deploy run --vars-file PATH`**. JSON object of
+  `{KEY: VALUE}` template variables (all string values). Merged with
+  `--var` (CLI `--var` wins on collision). Same KEY validation as
+  `--var`.
+- **`build_job_context(spec, config_path, *, cli_variables=None, ...)`**
+  gains the `cli_variables` keyword arg. Values render against the
+  built-in variables (`project_root`, `run_id`, …) and any earlier
+  YAML / CLI variables, so `--var out_dir={project_root}/seed42`
+  expands as expected. Unbound `{name}` references raise `KeyError`
+  with the offending variable name.
+- **`run_job(..., cli_variables=None)`** passes through to
+  `build_job_context`.
+- 24 new unit tests in `tests/test_var_flag.py` cover the parse
+  helpers (`_parse_var_arg`, `_load_vars_file`, `_merge_cli_variables`)
+  and the `build_job_context` plumbing (no vars / YAML override /
+  built-in references / chained YAML→CLI references / unbound surface).
+  217 tests pass; coverage clean.
+
+**Use case**: parallel multi-seed sweeps in consumer repos (e.g.,
+`prompt-injection-v5`) drive one `runpod-deploy run` invocation per
+shard with a single shared YAML template:
+
+```sh
+runpod-deploy run --config configs/runpod/v5_canonical.yaml \
+  --var seed=42 --var backbone=deberta
+runpod-deploy run --config configs/runpod/v5_canonical.yaml \
+  --var seed=43 --var backbone=deberta
+```
+
+Subsumes the prior `multi-config-sweep.md` recipe pattern of N
+hand-written near-duplicate YAMLs.
+
 ## [0.3.0] - 2026-05-14
 
 ### Added (v0.3.0 — pricing intelligence + forensic navigation)

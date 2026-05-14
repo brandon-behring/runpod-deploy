@@ -64,6 +64,74 @@ def _level_from_args(args: argparse.Namespace) -> int:
     return logging.INFO
 
 
+def _parse_var_arg(raw: str) -> tuple[str, str]:
+    """Parse one ``--var KEY=VALUE`` arg into a tuple. argparse type-hook.
+
+    Used by ``runpod-deploy run --var KEY=VALUE`` for template substitution.
+    KEY must be a valid Python identifier (letters/digits/underscore; not
+    starting with a digit) so it matches the ``{name}`` placeholder grammar
+    in ``render_template``. VALUE may be any string (including empty).
+    """
+    if "=" not in raw:
+        raise argparse.ArgumentTypeError(
+            f"--var requires KEY=VALUE form, got {raw!r} " "(example: --var seed=42)"
+        )
+    key, _, value = raw.partition("=")
+    if not key.isidentifier():
+        raise argparse.ArgumentTypeError(
+            f"--var KEY must be a valid identifier (letters/digits/underscore, "
+            f"not starting with a digit), got {key!r}"
+        )
+    return (key, value)
+
+
+def _load_vars_file(path: Path) -> dict[str, str]:
+    """Load a JSON object of ``{key: value}`` template variables.
+
+    All values must be strings. Used by ``runpod-deploy run --vars-file``
+    for many-variable sweeps. CLI ``--var`` flags override entries here
+    on collision.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"--vars-file path does not exist: {path}")
+    try:
+        raw = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--vars-file is not valid JSON: {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"--vars-file JSON root must be an object {{KEY: VALUE}}, "
+            f"got {type(raw).__name__} in {path}"
+        )
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or not key.isidentifier():
+            raise ValueError(
+                f"--vars-file key {key!r} must be a valid identifier "
+                f"(letters/digits/underscore, not starting with a digit)"
+            )
+        if not isinstance(value, str):
+            raise TypeError(
+                f"--vars-file value for {key!r} must be a string, got " f"{type(value).__name__}"
+            )
+        out[key] = value
+    return out
+
+
+def _merge_cli_variables(
+    var_args: list[tuple[str, str]] | None,
+    vars_file: Path | None,
+) -> dict[str, str]:
+    """Merge ``--vars-file`` (lower) with ``--var`` (higher precedence)."""
+    merged: dict[str, str] = {}
+    if vars_file is not None:
+        merged.update(_load_vars_file(vars_file))
+    if var_args:
+        for key, value in var_args:
+            merged[key] = value
+    return merged
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     spec = load_job_spec(args.config)
     ctx = build_job_context(spec, args.config)
@@ -227,6 +295,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
     if (args.gpu_id is None) != (args.datacenter_id is None):
         raise argparse.ArgumentTypeError("--gpu-id and --datacenter-id must be supplied together")
+    cli_variables = _merge_cli_variables(
+        var_args=getattr(args, "var", None),
+        vars_file=getattr(args, "vars_file", None),
+    )
     run_job(
         spec,
         config_path=args.config,
@@ -235,6 +307,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         gpu_id_override=args.gpu_id,
         datacenter_id_override=args.datacenter_id,
         max_gpu_price_usd=args.max_gpu_price,
+        cli_variables=cli_variables if cli_variables else None,
     )
     return 0
 
@@ -609,6 +682,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=None,
         help="Skip GPUs above this $/hr ceiling during failover loop. "
         "Reads RUNPOD_API_KEY for GraphQL pricing.",
+    )
+    run_parser.add_argument(
+        "--var",
+        type=_parse_var_arg,
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Set a template variable for {KEY} expansion (repeatable). "
+        "Overrides YAML 'variables:' block on collision. "
+        "Example: --var seed=42 --var backbone=deberta",
+    )
+    run_parser.add_argument(
+        "--vars-file",
+        type=Path,
+        default=None,
+        metavar="PATH",
+        help="JSON object of {KEY: VALUE} template variables. "
+        "Merged with --var (CLI --var wins on collision).",
     )
 
     stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
