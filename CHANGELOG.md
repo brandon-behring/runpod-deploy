@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-14 — CLI template variables
+
 ### Added — CLI template variables (`--var` + `--vars-file`)
 
 - **`runpod-deploy run --var KEY=VALUE`** (repeatable). Sets a template
