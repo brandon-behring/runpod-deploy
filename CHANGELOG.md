@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-05-14 — template rendering for run.* path/marker fields
+
 ### Fixed
 
 - **`run.script_path` / `run.log_path` / `run.success_marker` /
