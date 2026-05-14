@@ -55,3 +55,36 @@ When RunPod ships pods with newer drivers, bump the index URL (`cu128` →
 `cu129` etc.) and re-run `uv sync` on the pod. `runpod-deploy validate
 --scan-consumer` warns when `torch` is in `[project.dependencies]` but has no
 corresponding `[tool.uv.sources]` entry.
+
+## Persisting per-row predictions (consumer-repo discipline)
+
+Eval pipelines that ship only summary metrics (PR-AUC, ROC-AUC, recall@FPR at a
+small set of pre-baked pinpoints) close off **every downstream analysis** that
+needs per-row scores: calibration (ECE / Brier / reliability curves), threshold
+sweeps (detection vs verification policies), ROC curves, recall@FPR at
+arbitrary pinpoints, paired-bootstrap rung-vs-rung deltas, per-style breakdowns
+beyond the original tagger fidelity.
+
+This was a real failure mode in a consumer-repo iteration: the canonical pod
+run finished, the summary metrics JSON was pulled, and pod artifacts (including
+LoRA checkpoints) were destroyed. Re-running inference to recover scores cost
+~80 min on H100 NVL + ~$5. A 2x file-size increase in the artifacts pull would
+have prevented this entirely.
+
+**Recommended consumer-repo discipline**:
+
+- Every training/inference run persists per-row predictions alongside summary
+  metrics. Suggested layout: `evals/<version>/predictions/<rung>__<fold>__<seed>.parquet`
+  with columns `text_hash, y_true, y_score, source, slice`.
+- The `runpod-deploy` pull config (typically `artifacts:` block in the run
+  YAML) MUST include the `evals/<version>/predictions/` glob so per-row
+  artifacts are pulled before pod teardown.
+- For LoRA / fine-tuned rungs, also push checkpoints to HF Hub (or S3, etc.)
+  before pod teardown. Local pod artifacts are destroyed with the pod.
+- An invariant test in the consumer repo can assert that every cell in
+  `evals/<version>/results.json` has a corresponding `predictions/` file.
+
+This is consumer-repo discipline, not a `runpod-deploy` feature. But pulling
+predictions IS a `runpod-deploy` concern (artifacts pull-pattern), and it's
+exactly the kind of gotcha new consumer projects hit. Document it here so it
+shows up in `--scan-consumer` reviews of future repos.
