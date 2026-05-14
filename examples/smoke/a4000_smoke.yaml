@@ -17,6 +17,7 @@ pod:
   gpu_order:
     - NVIDIA RTX A4000
     - NVIDIA RTX A4500
+    - NVIDIA RTX 4000 Ada Generation
     - NVIDIA A100 80GB PCIe
 
 storage:
