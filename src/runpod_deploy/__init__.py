@@ -16,10 +16,12 @@ from runpod_deploy.config import (
     SshSpec,
     StopPolicySpec,
     StorageSpec,
+    TelemetrySpec,
     load_job_spec,
 )
+from runpod_deploy.metadata import capture_local_git, capture_payload_lockfile
 from runpod_deploy.orchestrator import run_job
-from runpod_deploy.provider import PodConnection, resolve_volume, select_gpu_for_datacenter
+from runpod_deploy.provider import PodConnection, resolve_volume, select_gpu_across_datacenters
 from runpod_deploy.transport import RemoteRunError, RemoteRunner, rsync_argv
 
 __all__ = [
@@ -39,11 +41,14 @@ __all__ = [
     "SshSpec",
     "StopPolicySpec",
     "StorageSpec",
+    "TelemetrySpec",
+    "capture_local_git",
+    "capture_payload_lockfile",
     "load_job_spec",
     "resolve_volume",
     "rsync_argv",
     "run_job",
-    "select_gpu_for_datacenter",
+    "select_gpu_across_datacenters",
 ]
 
 __version__ = "0.1.0"

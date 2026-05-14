@@ -164,7 +164,9 @@ def test_provision_pod_writes_state_file_and_returns_connection(
     )
     ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
-    pod = provision_pod(ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", dry_run=False)
+    pod = provision_pod(
+        ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+    )
 
     assert pod.pod_id == "pod-xyz"
     assert pod.host == "9.9.9.9"
@@ -180,7 +182,9 @@ def test_provision_pod_raises_when_create_fails(
     ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
     with pytest.raises(RuntimeError, match="pod create failed"):
-        provision_pod(ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", dry_run=False)
+        provision_pod(
+            ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+        )
 
 
 @pytest.mark.unit
@@ -191,7 +195,9 @@ def test_provision_pod_raises_when_no_pod_id_returned(
     ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
     with pytest.raises(RuntimeError, match="no pod id"):
-        provision_pod(ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", dry_run=False)
+        provision_pod(
+            ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+        )
 
 
 @pytest.mark.unit
@@ -200,7 +206,9 @@ def test_provision_pod_dry_run_returns_sentinel(
 ) -> None:
     ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
-    pod = provision_pod(ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", dry_run=True)
+    pod = provision_pod(
+        ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=True
+    )
 
     assert pod.pod_id == "<pod-id>"
     assert pod.host == "203.0.113.10"

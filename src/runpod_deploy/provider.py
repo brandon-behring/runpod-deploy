@@ -6,7 +6,7 @@ import json
 import logging
 import subprocess
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,7 +18,7 @@ __all__ = [
     "PodConnection",
     "resolve_volume",
     "run_json",
-    "select_gpu_for_datacenter",
+    "select_gpu_across_datacenters",
     "stop_pod",
 ]
 
@@ -35,41 +35,84 @@ class PodConnection:
     gpu_id: str
 
 
-def select_gpu_for_datacenter(
-    datacenters: Sequence[dict[str, object]],
+def select_gpu_across_datacenters(
+    datacenters_payload: Sequence[dict[str, object]],
     *,
-    datacenter_id: str,
+    datacenters: Sequence[str],
     gpu_order: Sequence[str],
-) -> str:
-    """Select the first configured available GPU in a datacenter."""
-    for dc in datacenters:
-        if dc.get("id") != datacenter_id:
+    on_failover: Callable[[str, str | None, str], None] | None = None,
+) -> tuple[str, str]:
+    """Select first available (gpu_id, datacenter_id) across the failover list.
+
+    Iterates ``datacenters`` in order; within each DC iterates ``gpu_order``
+    and returns the first GPU with non-empty/non-"out" stock. When a DC
+    yields no match, calls ``on_failover(failed_dc, next_dc, reason)``
+    before moving on. Raises RuntimeError when nothing matches across
+    all DCs.
+    """
+    if not datacenters:
+        raise ValueError("datacenters must contain at least one id")
+    last_observed: dict[str, dict[str, str]] = {}
+    for i, dc_id in enumerate(datacenters):
+        next_dc = datacenters[i + 1] if i + 1 < len(datacenters) else None
+        dc_payload = _find_datacenter(datacenters_payload, dc_id)
+        if dc_payload is None:
+            reason = f"datacenter {dc_id!r} not found in runpodctl datacenter list"
+            if on_failover is not None:
+                on_failover(dc_id, next_dc, reason)
             continue
-        availability = dc.get("gpuAvailability") or []
+        availability = dc_payload.get("gpuAvailability") or []
         if not isinstance(availability, list):
-            break
+            reason = f"datacenter {dc_id!r} gpuAvailability has unexpected type"
+            if on_failover is not None:
+                on_failover(dc_id, next_dc, reason)
+            continue
         by_id = {
             str(item.get("gpuId")): str(item.get("stockStatus") or "").strip()
             for item in availability
             if isinstance(item, dict)
         }
+        last_observed[dc_id] = by_id
         for gpu_id in gpu_order:
             stock = by_id.get(gpu_id, "")
             if stock and stock.lower() not in {"none", "unavailable", "out"}:
-                return gpu_id
-        message = f"no configured GPU is available in {datacenter_id}; observed={by_id}"
-        tier_rank = {"high": 0, "medium": 1, "low": 2}
-        available = sorted(
+                return gpu_id, dc_id
+        reason = f"no configured GPU available in {dc_id}; observed={by_id}"
+        if on_failover is not None:
+            on_failover(dc_id, next_dc, reason)
+    raise RuntimeError(_no_match_message(list(datacenters), gpu_order, last_observed))
+
+
+def _find_datacenter(payload: Sequence[dict[str, object]], dc_id: str) -> dict[str, object] | None:
+    for dc in payload:
+        if dc.get("id") == dc_id:
+            return dc
+    return None
+
+
+def _no_match_message(
+    datacenters: list[str],
+    gpu_order: Sequence[str],
+    last_observed: dict[str, dict[str, str]],
+) -> str:
+    """Format the diagnostic when nothing matches across all DCs."""
+    base = (
+        f"no configured GPU available across datacenters {datacenters} "
+        f"for gpu_order {list(gpu_order)}"
+    )
+    if not last_observed:
+        return base
+    tier_rank = {"high": 0, "medium": 1, "low": 2}
+    lines = [base, "  observed availability:"]
+    for dc_id, by_id in last_observed.items():
+        lines.append(f"  - {dc_id}:")
+        sorted_pairs = sorted(
             ((name, status) for name, status in by_id.items() if status.lower() in tier_rank),
             key=lambda item: (tier_rank[item[1].lower()], item[0]),
         )
-        if available:
-            hint_lines = [f"  - {name} ({status})" for name, status in available]
-            message = f"{message}\n  consider switching gpu_order to one of:\n" + "\n".join(
-                hint_lines
-            )
-        raise RuntimeError(message)
-    raise RuntimeError(f"datacenter {datacenter_id!r} not found in runpodctl datacenter list")
+        for name, status in sorted_pairs:
+            lines.append(f"      {name} ({status})")
+    return "\n".join(lines)
 
 
 def resolve_volume(
@@ -94,7 +137,9 @@ def resolve_volume(
     raise RuntimeError(f"volume {volume_name!r} not found; observed={observed}")
 
 
-def _build_pod_create_argv(ctx: JobContext, *, volume_id: str | None, gpu_id: str) -> list[str]:
+def _build_pod_create_argv(
+    ctx: JobContext, *, volume_id: str | None, gpu_id: str, datacenter_id: str
+) -> list[str]:
     """Build the `runpodctl pod create` argv."""
     spec = ctx.spec
     argv = [
@@ -106,12 +151,18 @@ def _build_pod_create_argv(ctx: JobContext, *, volume_id: str | None, gpu_id: st
     ]
     if spec.pod.gpu_count > 1:
         argv.extend(["--gpu-count", str(spec.pod.gpu_count)])
+    if spec.pod.spot:
+        argv.append("--spot")
+    if spec.pod.min_vcpu_count is not None:
+        argv.extend(["--min-vcpu-count", str(spec.pod.min_vcpu_count)])
+    if spec.pod.min_memory_gb is not None:
+        argv.extend(["--min-memory-in-gb", str(spec.pod.min_memory_gb)])
     argv.extend(
         [
             "--image",
             spec.pod.image,
             "--data-center-ids",
-            spec.pod.datacenters[0],
+            datacenter_id,
             "--volume-mount-path",
             spec.storage.volume_mount,
             f"--cloud-type={spec.pod.cloud_type}",
@@ -139,10 +190,13 @@ def provision_pod(
     *,
     volume_id: str | None,
     gpu_id: str,
+    datacenter_id: str,
     dry_run: bool,
 ) -> PodConnection:
     """Provision a pod and return SSH connection details."""
-    argv = _build_pod_create_argv(ctx, volume_id=volume_id, gpu_id=gpu_id)
+    argv = _build_pod_create_argv(
+        ctx, volume_id=volume_id, gpu_id=gpu_id, datacenter_id=datacenter_id
+    )
     log_cmd(logger, "runpodctl", argv)
     if dry_run:
         return PodConnection(pod_id="<pod-id>", host="203.0.113.10", port=22022, gpu_id=gpu_id)

@@ -105,10 +105,9 @@ stop:
 
 
 def _enqueue_runpodctl_happy_path(fake: FakeSubprocess) -> None:
+    # Order matches orchestrator: datacenter list (GPU selection) → network-volume
+    # list (volume resolution against selected DC) → pod create → pod get (ready).
     fake.enqueue(
-        FakeResult(
-            stdout=json.dumps([{"id": "vol-1", "name": "my-vol", "dataCenterId": "US-MD-1"}])
-        ),
         FakeResult(
             stdout=json.dumps(
                 [
@@ -120,6 +119,9 @@ def _enqueue_runpodctl_happy_path(fake: FakeSubprocess) -> None:
                     }
                 ]
             )
+        ),
+        FakeResult(
+            stdout=json.dumps([{"id": "vol-1", "name": "my-vol", "dataCenterId": "US-MD-1"}])
         ),
         FakeResult(stdout=json.dumps({"id": "pod-xyz"})),
         FakeResult(

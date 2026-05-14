@@ -25,7 +25,7 @@ from runpod_deploy.provider import (
     provision_pod,
     resolve_volume,
     run_json,
-    select_gpu_for_datacenter,
+    select_gpu_across_datacenters,
     stop_pod,
 )
 from runpod_deploy.transport import RemoteRunner, RsyncTransfer
@@ -48,9 +48,15 @@ def run_job(
     ctx = build_job_context(spec, config_path)
     validate_local_paths(ctx)
     _print_budget(spec)
-    volume_id = _resolve_volume_id(spec, offline=offline_dry_run)
-    gpu_id = _resolve_gpu_id(spec, offline=offline_dry_run)
-    pod = provision_pod(ctx, volume_id=volume_id, gpu_id=gpu_id, dry_run=dry_run)
+    gpu_id, datacenter_id = _resolve_gpu_id_and_dc(spec, offline=offline_dry_run)
+    volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
+    pod = provision_pod(
+        ctx,
+        volume_id=volume_id,
+        gpu_id=gpu_id,
+        datacenter_id=datacenter_id,
+        dry_run=dry_run,
+    )
     runner = RemoteRunner(
         host=pod.host,
         port=pod.port,
@@ -86,7 +92,7 @@ def run_job(
             logger.warning(f"[warn] pod preserved: {pod.pod_id}")
 
 
-def _resolve_volume_id(spec: RunpodJobSpec, *, offline: bool) -> str | None:
+def _resolve_volume_id(spec: RunpodJobSpec, *, datacenter_id: str, offline: bool) -> str | None:
     """Resolve the RunPod network-volume id, or None for ephemeral storage."""
     if spec.storage.mode != STORAGE_NETWORK_VOLUME:
         return None
@@ -99,19 +105,19 @@ def _resolve_volume_id(spec: RunpodJobSpec, *, offline: bool) -> str | None:
     volume_id, _ = resolve_volume(
         volumes,
         volume_name=volume_name,
-        expected_datacenter_id=spec.pod.datacenters[0],
+        expected_datacenter_id=datacenter_id,
     )
     return volume_id
 
 
-def _resolve_gpu_id(spec: RunpodJobSpec, *, offline: bool) -> str:
-    """Pick the GPU id for provisioning, falling back to the first preference offline."""
+def _resolve_gpu_id_and_dc(spec: RunpodJobSpec, *, offline: bool) -> tuple[str, str]:
+    """Pick (gpu_id, datacenter_id) for provisioning across the configured DCs."""
     if offline:
-        return spec.pod.gpu_order[0]
-    datacenters = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
-    return select_gpu_for_datacenter(
-        datacenters,
-        datacenter_id=spec.pod.datacenters[0],
+        return spec.pod.gpu_order[0], spec.pod.datacenters[0]
+    datacenters_payload = run_json(["runpodctl", "datacenter", "list", "-o", "json"])
+    return select_gpu_across_datacenters(
+        datacenters_payload,
+        datacenters=spec.pod.datacenters,
         gpu_order=spec.pod.gpu_order,
     )
 

@@ -54,13 +54,31 @@ def fetch_datacenter_payload(datacenter_id: str) -> Mapping[str, Any]:
 
 
 def check_gpu_availability(ctx: JobContext) -> None:
-    """Validate every gpu_order entry against live RunPod stock data."""
+    """Validate every gpu_order entry against live RunPod stock data.
+
+    Iterates ``spec.pod.datacenters`` (the failover list). Passes when at
+    least one DC has at least one ``gpu_order`` GPU with available stock;
+    raises when no DC has any available GPU.
+    """
     spec = ctx.spec
-    entry = fetch_datacenter_payload(spec.pod.datacenters[0])
+    any_available = False
+    for dc_id in spec.pod.datacenters:
+        if _check_one_datacenter(spec.pod.gpu_order, dc_id):
+            any_available = True
+    if not any_available:
+        raise RuntimeError(
+            f"no configured GPU is currently available in any datacenter of "
+            f"{list(spec.pod.datacenters)}"
+        )
+
+
+def _check_one_datacenter(gpu_order: tuple[str, ...], dc_id: str) -> bool:
+    """Report on one DC's availability; return True when at least one configured GPU is up."""
+    entry = fetch_datacenter_payload(dc_id)
     availability = entry.get("gpuAvailability") or []
     if not isinstance(availability, list):
         raise RuntimeError(
-            f"datacenter {spec.pod.datacenters[0]!r} gpuAvailability is "
+            f"datacenter {dc_id!r} gpuAvailability is "
             f"{type(availability).__name__}, expected list"
         )
     by_id: dict[str, str] = {}
@@ -71,27 +89,24 @@ def check_gpu_availability(ctx: JobContext) -> None:
             if name:
                 by_id[name] = status
     known_names = list(by_id.keys())
-    for gpu_id in spec.pod.gpu_order:
+    for gpu_id in gpu_order:
         if gpu_id not in by_id:
             suggestions = difflib.get_close_matches(gpu_id, known_names, n=1, cutoff=0.6)
             hint = f" — did you mean {suggestions[0]!r}?" if suggestions else ""
-            logger.error(f"[gpu] {gpu_id!r} not in datacenter {spec.pod.datacenters[0]}{hint}")
+            logger.error(f"[gpu:{dc_id}] {gpu_id!r} not in datacenter{hint}")
             continue
         status = by_id[gpu_id]
         if status.lower() in _UNAVAILABLE_STOCK:
-            logger.warning(f"[gpu] {gpu_id!r} stockStatus={status!r} (treated as unavailable)")
-    available = [
-        name for name in spec.pod.gpu_order if by_id.get(name, "").lower() in _AVAILABLE_STOCK
-    ]
+            logger.warning(
+                f"[gpu:{dc_id}] {gpu_id!r} stockStatus={status!r} (treated as unavailable)"
+            )
+    available = [name for name in gpu_order if by_id.get(name, "").lower() in _AVAILABLE_STOCK]
     if not available:
-        raise RuntimeError(
-            f"no configured GPU is currently available in {spec.pod.datacenters[0]}; observed={by_id}"
-        )
+        logger.warning(f"[gpu:{dc_id}] no configured GPU available; observed={by_id}")
+        return False
     if all(by_id.get(name, "").lower() == "low" for name in available):
-        logger.warning(
-            f"[gpu] all configured GPUs in {spec.pod.datacenters[0]} are Low stock — "
-            "provisioning may fail"
-        )
+        logger.warning(f"[gpu:{dc_id}] all configured GPUs are Low stock — provisioning may fail")
+    return True
 
 
 def scan_consumer_pyproject(ctx: JobContext) -> None:
