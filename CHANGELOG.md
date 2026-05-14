@@ -72,6 +72,13 @@ This project follows Semantic Versioning.
 
 ### Changed
 
+- **Breaking:** Minimum Python version bumped from 3.11 to 3.13.
+  `requires-python` is now `>=3.13`; classifiers drop 3.11 and 3.12;
+  style configs (`black`, `ruff`, `mypy`) target `py313`; CI matrix
+  narrowed to `["3.13", "3.14"]`. `.python-version` (pinning 3.13)
+  is now tracked. The ruff pre-commit hook id was also renamed from
+  the deprecated `ruff` to `ruff-check`. Contributors on older Python
+  must upgrade.
 - `provider.select_gpu_for_datacenter` raises a richer error when no
   configured GPU is available — appends a `consider switching
   gpu_order to one of:` list naming any available GPUs in the
