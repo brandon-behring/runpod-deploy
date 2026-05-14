@@ -156,11 +156,92 @@ def resolve_volume(
     raise RuntimeError(f"volume {volume_name!r} not found; observed={observed}")
 
 
+def _supported_pod_create_flags() -> frozenset[str]:
+    """Return the set of flags supported by the installed ``runpodctl pod create``.
+
+    Parses ``runpodctl pod create --help`` and extracts every long-form flag
+    (``--name``). Cached for the lifetime of the process; the result is a
+    function of the locally-installed runpodctl binary.
+
+    Returns
+    -------
+    frozenset[str]
+        Set of flag names without the leading dashes (e.g.,
+        ``"gpu-id"``, ``"data-center-ids"``, ...). Empty set on probe
+        failure (treated as "permissive" — emit flags and let runpodctl
+        decide; matches pre-v0.3.2 behavior).
+    """
+    cached: frozenset[str] | None = _supported_pod_create_flags._cached  # type: ignore[attr-defined]
+    if cached is not None:
+        return cached
+    try:
+        result = subprocess.run(
+            ["runpodctl", "pod", "create", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        logger.warning(
+            "runpodctl flag probe failed (%s); emitting all configured flags "
+            "without feature detection",
+            type(exc).__name__,
+        )
+        flags: frozenset[str] = frozenset()
+        _supported_pod_create_flags._cached = flags  # type: ignore[attr-defined]
+        return flags
+    # Each flag line looks like:  "      --gpu-id string          gpu id (...)"
+    # We split on whitespace and pick tokens that start with "--".
+    found: set[str] = set()
+    for line in (result.stdout + result.stderr).splitlines():
+        for token in line.split():
+            if token.startswith("--") and len(token) > 2:
+                # Strip trailing punctuation if any (e.g., "--gpu-id,").
+                name = token[2:].rstrip(",")
+                if name and all(c.isalnum() or c == "-" for c in name):
+                    found.add(name)
+    flags = frozenset(found)
+    _supported_pod_create_flags._cached = flags  # type: ignore[attr-defined]
+    return flags
+
+
+# Function-level cache. Reset in tests via ``_supported_pod_create_flags._cached = None``.
+_supported_pod_create_flags._cached = None  # type: ignore[attr-defined]
+
+
+def _maybe_extend(
+    argv: list[str],
+    name: str,
+    *values: str,
+    supported: frozenset[str],
+    yaml_key: str | None = None,
+) -> None:
+    """Append ``--name [values...]`` to ``argv`` iff runpodctl supports it.
+
+    Logs a WARNING when a configured flag is skipped because the local
+    runpodctl doesn't recognize it. Empty ``supported`` (probe failure)
+    is treated as permissive.
+    """
+    if supported and name not in supported:
+        logger.warning(
+            "runpodctl pod create does not support --%s in the locally-installed "
+            "version; skipping (set in YAML as 'pod.%s'). Upgrade runpodctl when "
+            "the flag becomes available, or omit the YAML key to silence this.",
+            name,
+            yaml_key or name.replace("-", "_"),
+        )
+        return
+    argv.append(f"--{name}")
+    argv.extend(values)
+
+
 def _build_pod_create_argv(
     ctx: JobContext, *, volume_id: str | None, gpu_id: str, datacenter_id: str
 ) -> list[str]:
-    """Build the `runpodctl pod create` argv."""
+    """Build the `runpodctl pod create` argv with feature-detected flag gating."""
     spec = ctx.spec
+    supported = _supported_pod_create_flags()
     argv = [
         "runpodctl",
         "pod",
@@ -171,11 +252,23 @@ def _build_pod_create_argv(
     if spec.pod.gpu_count > 1:
         argv.extend(["--gpu-count", str(spec.pod.gpu_count)])
     if spec.pod.spot:
-        argv.append("--spot")
+        _maybe_extend(argv, "spot", supported=supported, yaml_key="spot")
     if spec.pod.min_vcpu_count is not None:
-        argv.extend(["--min-vcpu-count", str(spec.pod.min_vcpu_count)])
+        _maybe_extend(
+            argv,
+            "min-vcpu-count",
+            str(spec.pod.min_vcpu_count),
+            supported=supported,
+            yaml_key="min_vcpu_count",
+        )
     if spec.pod.min_memory_gb is not None:
-        argv.extend(["--min-memory-in-gb", str(spec.pod.min_memory_gb)])
+        _maybe_extend(
+            argv,
+            "min-memory-in-gb",
+            str(spec.pod.min_memory_gb),
+            supported=supported,
+            yaml_key="min_memory_gb",
+        )
     argv.extend(
         [
             "--image",

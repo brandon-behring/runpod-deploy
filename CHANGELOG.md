@@ -4,6 +4,41 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`runpodctl` flag feature-detection (closes phantom-flag emission
+  bug).** Previously, when a YAML config set `pod.spot: true`,
+  `pod.min_vcpu_count`, or `pod.min_memory_gb`, `provider._build_pod_create_argv`
+  unconditionally emitted `--spot` / `--min-vcpu-count` / `--min-memory-in-gb`
+  flags to `runpodctl pod create`. **None of those flags exist in upstream
+  `runpodctl` v2.3.0** (the latest), so any pod-create call with those YAML
+  keys set would fail with `{"error":"unknown flag: --min-vcpu-count"}` and
+  print the `runpodctl pod create --help` text to stderr.
+
+  Fix: `provider._supported_pod_create_flags()` probes `runpodctl pod
+  create --help` once per process, parses the long-form flags, and gates
+  emission accordingly. Unsupported flags are now SKIPPED with a clear
+  WARNING (`runpodctl pod create does not support --<flag> in the
+  locally-installed version; skipping ...`) so the operator can see
+  the limitation without the deploy aborting.
+
+  Probe failures (runpodctl missing, --help format change, timeout) are
+  treated permissively (empty supported-set → all flags emitted),
+  matching pre-v0.3.2 behavior so existing pipelines don't regress on
+  unusual hosts.
+
+  3 new tests in `tests/test_provider.py` cover the gated-on / gated-off /
+  empty-probe-permissive branches plus a smoke probe against the real
+  installed `runpodctl`. The pre-existing
+  `test_pod_create_emits_spot_and_min_resources_when_set` was renamed to
+  `..._when_supported` and gained a `monkeypatch` of the flag-detection
+  helper so it tests the intended contract independent of host runpodctl.
+
+  Surfaced by `prompt-injection-v5` v0.1.0 smoke run on RTX 2000 Ada @
+  EU-RO-1: the smoke YAML's `min_vcpu_count: 4` / `min_memory_gb: 16`
+  blocked the first invocation; this fix prevents the failure from
+  recurring once those keys land in any consumer config.
+
 ## [0.3.1] - 2026-05-14 — CLI template variables
 
 ### Added — CLI template variables (`--var` + `--vars-file`)
