@@ -300,7 +300,17 @@ run:
 
 
 @pytest.mark.unit
-def test_pod_create_emits_spot_and_min_resources_when_set(tmp_path: Path) -> None:
+def test_pod_create_emits_spot_and_min_resources_when_supported(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When runpodctl advertises the flags, runpod-deploy emits them."""
+    from runpod_deploy import provider
+
+    monkeypatch.setattr(
+        provider,
+        "_supported_pod_create_flags",
+        lambda: frozenset({"spot", "min-vcpu-count", "min-memory-in-gb", "gpu-id"}),
+    )
     config = tmp_path / "job.yaml"
     config.write_text("""
 schema_version: 2
@@ -330,6 +340,116 @@ run:
     assert "16" in argv
     assert "--min-memory-in-gb" in argv
     assert "64" in argv
+
+
+@pytest.mark.unit
+def test_pod_create_skips_unsupported_flags_with_warning(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """When runpodctl doesn't advertise a flag, runpod-deploy skips it + WARNs.
+
+    Mirrors the real failure mode: locally-installed ``runpodctl`` v2.3.0
+    doesn't recognize ``--spot`` / ``--min-vcpu-count`` / ``--min-memory-in-gb``,
+    so emitting them would cause ``runpodctl pod create`` to exit non-zero with
+    "unknown flag" error.
+    """
+    import logging
+
+    from runpod_deploy import provider
+
+    monkeypatch.setattr(
+        provider,
+        "_supported_pod_create_flags",
+        lambda: frozenset({"gpu-id", "image", "data-center-ids"}),
+    )
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+pod:
+  image: image
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+  spot: true
+  min_vcpu_count: 16
+  min_memory_gb: 64
+storage:
+  mode: ephemeral
+  volume_gb: 100
+run:
+  script_path: /workspace/run.sh
+  log_path: /workspace/run.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    ctx = build_job_context(load_job_spec(config), config)
+
+    with caplog.at_level(logging.WARNING, logger="runpod_deploy.provider"):
+        argv = _build_pod_create_argv(ctx, volume_id=None, gpu_id="gpu-a", datacenter_id="EU-RO-1")
+
+    assert "--spot" not in argv
+    assert "--min-vcpu-count" not in argv
+    assert "--min-memory-in-gb" not in argv
+    skipped = [r for r in caplog.records if "does not support" in r.message]
+    assert len(skipped) == 3, f"expected 3 skip warnings, got {len(skipped)}: {caplog.text}"
+
+
+@pytest.mark.unit
+def test_pod_create_permissive_when_probe_returns_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Empty probe result (runpodctl missing / probe timeout) is treated permissively.
+
+    Preserves backward compatibility for environments where runpodctl flag
+    detection isn't possible; matches pre-v0.3.2 always-emit behavior.
+    """
+    from runpod_deploy import provider
+
+    monkeypatch.setattr(provider, "_supported_pod_create_flags", lambda: frozenset())
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+pod:
+  image: image
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+  spot: true
+  min_vcpu_count: 16
+storage:
+  mode: ephemeral
+  volume_gb: 100
+run:
+  script_path: /workspace/run.sh
+  log_path: /workspace/run.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    ctx = build_job_context(load_job_spec(config), config)
+
+    argv = _build_pod_create_argv(ctx, volume_id=None, gpu_id="gpu-a", datacenter_id="EU-RO-1")
+
+    assert "--spot" in argv
+    assert "--min-vcpu-count" in argv
+
+
+@pytest.mark.unit
+def test_supported_pod_create_flags_parses_real_help_output() -> None:
+    """Cache-bypass smoke against actual runpodctl: --gpu-id is always supported."""
+    from runpod_deploy.provider import _supported_pod_create_flags
+
+    # Reset the function-level cache so the probe runs against current runpodctl.
+    _supported_pod_create_flags._cached = None  # type: ignore[attr-defined]
+    try:
+        flags = _supported_pod_create_flags()
+    except Exception as exc:  # noqa: BLE001 - test must tolerate missing runpodctl
+        pytest.skip(f"runpodctl not available for probe smoke: {exc}")
+    if not flags:
+        pytest.skip("runpodctl probe returned empty (binary missing or help format changed)")
+    assert "gpu-id" in flags
+    assert "image" in flags
 
 
 @pytest.mark.unit
