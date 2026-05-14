@@ -4,6 +4,111 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-14
+
+### Added (v0.2.0 — own deployment primitives, expose recipes)
+
+- **Multi-DC failover.** `pod.datacenters` (list) replaces
+  `pod.datacenter_id` (string). New `provider.select_gpu_across_datacenters`
+  iterates DCs in YAML order; within each DC iterates `gpu_order`; returns
+  the first available `(gpu_id, dc_id)`. `on_failover(failed_dc, next_dc,
+  reason)` callback fires per-DC exhaustion; orchestrator emits a
+  `datacenter_failover` event into `events.jsonl`. Replaces v4-style manual
+  DC rotation when stock evaporates.
+- **Spot + min-resource pod knobs.** New `pod.spot: bool`,
+  `pod.min_vcpu_count`, `pod.min_memory_gb`. `provider._build_pod_create_argv`
+  emits `--spot`, `--min-vcpu-count N`, `--min-memory-in-gb N` when set.
+- **TelemetrySpec block.** New `telemetry:` YAML block (all defaults
+  enabled): `enabled`, `sample_interval_sec`, `capture_nvidia_smi`,
+  `capture_dmesg`, `capture_pod_describe`, `capture_remote_env`,
+  `capture_local_git`, `capture_payload_lockfile`.
+- **`telemetry.py` module.** `TelemetrySession` owns one-shot snapshots
+  (`nvidia_smi_{start,end}.txt`, `pod_describe_{start,end}.json`,
+  `pip_freeze.txt`, `remote_env.json`, `dmesg_tail.txt`), background
+  sampling thread (~one row per `sample_interval_sec` to `metrics.jsonl`
+  with GPU + CPU + host mem + workspace disk), and a structured
+  `events.jsonl` of orchestrator decisions (`gpu_selected`,
+  `datacenter_failover`, `artifact_pull_*`, `remote_step_*`,
+  `pod_killed_unexpected`). Stop-sampling joins with a 10 s timeout
+  before abandoning a stuck thread; telemetry must never abort the run.
+- **`metadata.py` module.** `capture_local_git(project_root)` and
+  `capture_payload_lockfile(project_root)` helpers used by the orchestrator
+  (auto-embedded in every manifest under `deploy_metadata`) and by the new
+  `runpod-deploy capture-env` subcommand.
+- **`runpod-deploy capture-env --project-root <path>`** — emits a JSON
+  object with `local_git_sha`, `local_git_dirty`, `local_git_branch`,
+  `payload_lockfile`, `payload_lockfile_sha256` to stdout. Lets consumers
+  embed deploy metadata in their own evals manifests without a
+  `runpod-deploy run` invocation. Replaces hand-rolled
+  `GIT_SHA=$(git rev-parse HEAD)` Makefile injection.
+- **`runpod-deploy manifest-summary <path>`** — pretty-prints a v1 or v2
+  pull manifest as compact key/value lines (job, run id, pod, GPU, DC,
+  wall time, captured $/hr price, estimated cost, deploy_metadata block,
+  per-artifact status, telemetry files).
+- **`runpod-deploy run --gpu-id <id> --datacenter-id <dc>`** — paired
+  override that short-circuits GPU/DC selection for one-off runs. Both
+  flags must come together; CLI override is logged at INFO and emitted
+  as a `gpu_selected` event.
+- **Reactive cost capture.** `runpodctl pod get`'s `costPerHr` field
+  parsed at `capture_start`; manifest gains `gpu_price_per_hour_usd` +
+  `gpu_price_source` (`pod_describe` | `assumed_rate`) +
+  `estimated_cost_usd` (`gpu_price × wall_time / 3600`).
+- **Pod-kill detection.** `runpodctl pod get`'s `desiredStatus` field
+  parsed at `capture_end`; states ∉ `{RUNNING, EXITED}` emit
+  `pod_killed_unexpected` event with the observed state and set
+  `pod_final_state` in the manifest. Surfaces the v4 "EUR-NO-2 mid-fold-0
+  killed by RunPod" failure mode that previously left no forensic trail.
+- **Always-pull remote log.** `_pull_artifacts_and_log` rsyncs
+  `spec.run.log_path` to `run_dir/run.log` *first*, then iterates
+  declared artifacts. Log is pulled even on failure when the run started
+  — addresses the v0.1.0 case where remote stdout was lost on RunPod
+  pod kills.
+- **Per-artifact pull tracking.** `manifest.ArtifactResult` (frozen
+  slotted dataclass; status ∈ `success` | `failed` | `skipped`) embedded
+  per-artifact in the v2 manifest with `bytes_transferred`,
+  `duration_sec`, optional `error`.
+- **Optional per-step markers.** `__RUNPOD_STEP_START__name__` /
+  `__RUNPOD_STEP_DONE__name__` markers in `run.body` are parsed by
+  `_monitor_remote_log` and emitted as `remote_step_started` /
+  `remote_step_completed` events. Each unique `(kind, name)` pair
+  emitted once via a seen set; consumers compute durations from `ts_utc`
+  deltas in `events.jsonl`. Pure opt-in convention; absent markers cause
+  no behavior change.
+- **`docs/recipes/`** — six markdown recipes (README, local-preflight-then-run,
+  local-postprocess-after-run, embed-deploy-metadata, multi-config-sweep,
+  cost-reconciliation) documenting the composition patterns consumers
+  use to wire `runpod-deploy run` into their pipeline. Single-responsibility
+  rationale up-front: runpod-deploy is deployment-primitives; recipes
+  show how to compose around it without bloating the schema.
+- **`MIGRATION.md`** — two-edit guide (schema_version bump, datacenter_id
+  → datacenters list).
+- New `__all__` re-exports in `runpod_deploy.__init__`: `TelemetrySpec`,
+  `select_gpu_across_datacenters`, `capture_local_git`,
+  `capture_payload_lockfile`.
+
+### Changed (v0.2.0)
+
+- **Breaking: SCHEMA_VERSION 1 → 2.** v1 configs hard-fail at load time
+  with a clear diagnostic. See `MIGRATION.md` for the two mechanical
+  edits per config.
+- `provider.select_gpu_for_datacenter` removed; replaced by
+  `provider.select_gpu_across_datacenters` returning
+  `tuple[gpu_id, datacenter_id]`.
+- `provider.provision_pod` and `provider._build_pod_create_argv` now take
+  explicit `datacenter_id` keyword args (the loop winner); no longer read
+  `spec.pod.datacenter_id`.
+- `orchestrator.run_job` rewritten to integrate telemetry + metadata +
+  failover (linear ~70-line flow, justified by docstring per CLAUDE.md §8).
+  Call order: GPU+DC selection → volume resolution → provision (was
+  volume → GPU before).
+- `manifest.SCHEMA_VERSION` `"v1"` → `"v2"`; `build_pull_manifest` gains
+  keyword-only params with safe defaults so legacy callers continue to
+  emit a v2 manifest with `null` placeholders for the new fields.
+- `runpod-deploy validate` warns when `storage.mode: network_volume`
+  combines with `len(pod.datacenters) > 1`.
+
+## [Unreleased pre-0.2.0 — landed in 0.2.0]
+
 ### Added
 
 - New top-level `secrets:` YAML block — stages one file per entry to the pod
