@@ -300,6 +300,103 @@ def _cmd_ls_runs(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_compare_runs(args: argparse.Namespace) -> int:
+    a = forensics.load_manifest(args.a)
+    b = forensics.load_manifest(args.b)
+    if a is None or b is None:
+        return 1
+    sys.stdout.write(_format_compare_runs(args.a, args.b, a, b) + "\n")
+    return 1 if a.get("failed") or b.get("failed") else 0
+
+
+_COMPARE_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "failed",
+    "job_name",
+    "gpu_id",
+    "datacenter_id",
+    "gpu_price_per_hour_usd",
+    "gpu_price_source",
+    "wall_time_sec",
+    "estimated_cost_usd",
+    "pod_id",
+    "pod_final_state",
+    "image",
+    "storage_mode",
+)
+_COMPARE_METADATA_FIELDS: tuple[str, ...] = (
+    "local_git_sha",
+    "local_git_dirty",
+    "local_git_branch",
+    "payload_lockfile",
+    "payload_lockfile_sha256",
+    "remote_python_version",
+    "remote_uname",
+)
+
+
+def _format_compare_runs(a_path: Path, b_path: Path, a: dict[str, Any], b: dict[str, Any]) -> str:
+    lines = [
+        "diff between two manifests:",
+        f"  a: {a_path}  ({a.get('job_name')})",
+        f"  b: {b_path}  ({b.get('job_name')})",
+        "",
+    ]
+    rows: list[tuple[str, str]] = []
+    for field in _COMPARE_FIELDS:
+        rows.append((field, _diff_cell(a.get(field), b.get(field))))
+    a_meta = a.get("deploy_metadata") or {}
+    b_meta = b.get("deploy_metadata") or {}
+    if not isinstance(a_meta, dict):
+        a_meta = {}
+    if not isinstance(b_meta, dict):
+        b_meta = {}
+    for field in _COMPARE_METADATA_FIELDS:
+        rows.append((f"deploy_metadata.{field}", _diff_cell(a_meta.get(field), b_meta.get(field))))
+    a_arts = _index_artifacts(a.get("artifacts"))
+    b_arts = _index_artifacts(b.get("artifacts"))
+    for label in sorted(set(a_arts) | set(b_arts)):
+        a_art = a_arts.get(label) or {}
+        b_art = b_arts.get(label) or {}
+        for field in ("status", "bytes_transferred", "duration_sec"):
+            rows.append(
+                (
+                    f"artifact[{label}].{field}",
+                    _diff_cell(a_art.get(field), b_art.get(field)),
+                )
+            )
+    field_width = max(len(f) for f, _ in rows) + 2
+    for field, cell in rows:
+        lines.append(f"  {field:<{field_width}}{cell}")
+    return "\n".join(lines)
+
+
+def _diff_cell(av: object, bv: object) -> str:
+    if av == bv:
+        return f"{_render_value(av)} == {_render_value(bv)}"
+    return f"{_render_value(av)}  →  {_render_value(bv)}"
+
+
+def _render_value(v: object) -> str:
+    if v is None:
+        return "—"
+    if isinstance(v, float):
+        return f"{v:.2f}" if abs(v) < 1000 else f"{v:.1f}"
+    return str(v)
+
+
+def _index_artifacts(value: object) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for item in value:
+        if isinstance(item, dict):
+            label = str(item.get("label") or "")
+            if label:
+                out[label] = item
+    return out
+
+
 def _cmd_capture_env(args: argparse.Namespace) -> int:
     project_root = Path(args.project_root).resolve()
     payload: dict[str, object] = {}
@@ -534,6 +631,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--json", action="store_true", help="Emit machine-readable JSON instead of a table."
     )
 
+    compare_parser = sub.add_parser(
+        "compare-runs",
+        parents=[verbosity],
+        help="Side-by-side diff of two pull manifests; exit 1 on any failed=true.",
+    )
+    compare_parser.add_argument("a", type=Path, help="First manifest path or run dir.")
+    compare_parser.add_argument("b", type=Path, help="Second manifest path or run dir.")
+
     capture_env_parser = sub.add_parser(
         "capture-env",
         parents=[verbosity],
@@ -566,6 +671,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "gpu-prices": _cmd_gpu_prices,
         "estimate": _cmd_estimate,
         "ls-runs": _cmd_ls_runs,
+        "compare-runs": _cmd_compare_runs,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }
