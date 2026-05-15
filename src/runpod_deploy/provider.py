@@ -321,14 +321,14 @@ def provision_pod(
     pod_id = str(payload.get("id") or payload.get("podId") or "")
     if not pod_id:
         raise RuntimeError(f"pod create returned no pod id: {payload}")
-    pod = _wait_for_pod_ready(pod_id, ctx, gpu_id=gpu_id)
+    pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id)
     state_file = ctx.spec.resolved_state_file
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps({"pod_id": pod.pod_id, "gpu_id": gpu_id}, indent=2))
     return pod
 
 
-def _wait_for_pod_ready(pod_id: str, ctx: JobContext, *, gpu_id: str) -> PodConnection:
+def _wait_for_pod_ready(pod_id: str, *, gpu_id: str) -> PodConnection:
     """Wait until RunPod reports a pod as running with SSH host/port."""
     deadline = time.time() + 240
     last_payload: dict[str, object] = {}

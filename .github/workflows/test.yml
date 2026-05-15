@@ -28,3 +28,59 @@ jobs:
         run: make test
       - name: Coverage
         run: make coverage
+
+  # Verify the package installs cleanly with NO extras (no [dev] pull-in).
+  # Guards against unconditional dependency imports at module level —
+  # i.e., a future PR adding `import pytest` to src/ would break this.
+  test-base-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Create venv
+        run: uv venv --python 3.13
+      - name: Install base package only (no extras)
+        run: uv pip install .
+      - name: Smoke-import public API
+        run: |
+          uv run python -c "
+          import runpod_deploy
+          from runpod_deploy import (
+              load_job_spec, build_job_context, run_job, validate_local_paths,
+              JobContext, RunpodJobSpec, PodSpec, StorageSpec,
+              RsyncPushSpec, ArtifactPullSpec, SecretSpec,
+              SCHEMA_VERSION, STORAGE_NETWORK_VOLUME, STORAGE_EPHEMERAL,
+              DEFAULT_STAGING_EXCLUDES,
+          )
+          print(f'OK: runpod_deploy {runpod_deploy.__version__}')
+          "
+      - name: Smoke-CLI help
+        run: |
+          uv run runpod-deploy --help
+          uv run runpod-deploy run --help
+          uv run runpod-deploy events-query --help
+
+  # Run pip-audit against the locked dependency set. CVE detection.
+  # Allows the workflow to pass on unfixed vulnerabilities by default
+  # (false-positive friendly) but surfaces them in the run log; failures
+  # here are advisory until proven actionable.
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Create venv
+        run: uv venv --python 3.13
+      - name: Install package + dev extras
+        run: uv pip install -e ".[dev]"
+      - name: Install pip-audit
+        run: uv pip install pip-audit
+      - name: Run pip-audit
+        run: uv run pip-audit --disable-pip
+        # Note: --disable-pip avoids the warning about pip-deprecated tooling.
+        # Removing --strict means unfixed vulnerabilities don't fail the build;
+        # surface in logs, action via dependabot PRs.

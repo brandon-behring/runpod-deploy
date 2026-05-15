@@ -1,0 +1,38 @@
+version: 2
+
+# Weekly grouped dependency updates. Minor + patch updates batch into a
+# single PR per ecosystem to keep review noise low; major updates land
+# individually so they get explicit attention.
+#
+# Reviews land on Mondays so they're top-of-week and don't pile up.
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      pip-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
