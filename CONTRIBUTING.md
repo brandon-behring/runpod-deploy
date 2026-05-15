@@ -35,6 +35,27 @@ make ci         # all three; CI parity
 Optional: `pre-commit install` to run ruff + black + gitleaks at
 `git commit` time. `make lint` is the canonical enforcement path.
 
+Optional shell completion (mirrors the [completion] extra documented in
+the README quickstart):
+
+```sh
+uv pip install -e ".[dev,completion]"
+eval "$(register-python-argcomplete runpod-deploy)"   # bash/zsh
+```
+
+For permanent activation, append the `eval` line to your `~/.bashrc` or
+`~/.zshrc`.
+
+Optional `mypy` at push time (in addition to `make lint`):
+
+```sh
+pre-commit install --install-hooks --hook-type pre-push
+```
+
+This adds the `mypy src` hook from `.pre-commit-config.yaml`'s
+`stages: [pre-push]` block. Commit cycles stay fast (~0.1s); push-time
+gate adds ~1–3s before any actual remote push.
+
 ## What we won't merge
 
 Per the [single-responsibility boundary](docs/extending.md#3-contributors--the-srp-boundary):

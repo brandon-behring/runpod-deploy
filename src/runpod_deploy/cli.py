@@ -1,5 +1,9 @@
 """Command-line interface for runpod-deploy."""
 
+# PYTHON_ARGCOMPLETE_OK  — enables `argcomplete`-based shell completion
+# when the optional `[completion]` extra is installed and global
+# completion is activated (see README quickstart + CONTRIBUTING.md).
+
 from __future__ import annotations
 
 import argparse
@@ -1038,6 +1042,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         "estimated_cost_usd). Typical use: --root artifacts/runpod after a "
         "multi-shard sweep. Mutually exclusive with the positional manifest arg.",
     )
+
+    # Shell completion via argcomplete (no-op unless the `[completion]`
+    # extra is installed and `eval "$(register-python-argcomplete runpod-deploy)"`
+    # is in the shell rc). Must come before `parser.parse_args`.
+    try:
+        import argcomplete
+
+        argcomplete.autocomplete(parser)
+    except ImportError:
+        pass
 
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))

@@ -3,6 +3,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
 [![CI](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml/badge.svg)](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml)
 [![Python](https://img.shields.io/pypi/pyversions/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
+[![Downloads](https://static.pepy.tech/badge/runpod-deploy)](https://pepy.tech/project/runpod-deploy)
 [![License](https://img.shields.io/pypi/l/runpod-deploy.svg)](https://github.com/brandon-behring/runpod-deploy/blob/main/LICENSE)
 
 `runpod-deploy` is a config-driven RunPod orchestration package for reusable
@@ -32,6 +33,16 @@ walks through the per-host setup (SSH key registration, rsync version) once.
 For new consumers, [`docs/quickstart.md`](docs/quickstart.md) is the 5-minute
 onboarding walkthrough, and [`docs/lifecycle.md`](docs/lifecycle.md) explains
 what happens at each phase of a `runpod-deploy run`.
+
+**Optional**: shell tab completion. Install via the `[completion]` extra and
+register with your shell:
+
+```bash
+pip install runpod-deploy[completion]
+eval "$(register-python-argcomplete runpod-deploy)"   # bash/zsh
+```
+
+Add the `eval` line to your `~/.bashrc` or `~/.zshrc` for persistence.
 
 **Contributors**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the editable
 install (`uv pip install -e ".[dev]"`), pre-commit setup, and the
