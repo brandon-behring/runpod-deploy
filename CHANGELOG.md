@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-15 — consumer-onboarding + reference depth
+
 ### Added
 
 - **`examples/v0_5_canonical/canonical_sweep_pinned.yaml`** + companion

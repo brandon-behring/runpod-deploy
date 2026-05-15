@@ -55,6 +55,6 @@ __all__ = [
     "select_price_for_pod",
 ]
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
