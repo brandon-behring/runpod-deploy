@@ -1,4 +1,46 @@
-# Migrating configs from v1 to v2 (runpod-deploy 0.2.0)
+# Migration & schema-versioning policy
+
+This doc covers (1) the versioning policy that governs YAML schema
+changes, (2) the canonical v1 → v2 schema migration shipped in
+v0.2.0, and (3) a summary of every *additive* change shipped between
+schema versions (which require no migration but may want opt-in).
+
+For breaking changes that warrant a schema bump, see "When we will
+bump SCHEMA_VERSION" at the bottom.
+
+---
+
+## Schema-versioning policy
+
+The YAML schema is versioned independently of the runpod-deploy
+package. The current schema is `schema_version: 2` (introduced in
+runpod-deploy 0.2.0).
+
+**Strict loading**: `load_job_spec` enforces the declared
+`schema_version` matches exactly. A v1 config loaded by v0.2.0+ raises
+`ValueError: schema_version must be 2, got 1` with a clear path to the
+required edits.
+
+**Additive changes do NOT bump the schema**: adding an optional field
+with a sane default preserves all existing YAMLs. Per CLAUDE.md §5
+("Anti-overengineering — don't add an abstraction unless a second
+concrete use exists"), we resist schema-version inflation: a field is
+additive if (a) it has a falsy default, (b) no existing-YAML semantic
+changes when unset, (c) all loader paths produce identical behavior
+for old configs.
+
+**Behavioral changes do NOT bump the schema** when they're internal
+implementation details that don't alter the YAML contract — e.g.,
+v0.3.x's `runpodctl` flag feature-detection, v0.5.0's auto-injection
+of the `python_version` preflight step.
+
+**Breaking changes DO bump the schema**: removing a field, renaming
+a key, changing a field's type, changing observable semantics for an
+existing field. See "When we will bump SCHEMA_VERSION" below.
+
+---
+
+## Migrating configs from v1 to v2 (runpod-deploy 0.2.0)
 
 `runpod-deploy` 0.2.0 bumps the YAML schema from v1 to v2. The strict
 loader rejects v1 configs at load time with a clear diagnostic
@@ -110,3 +152,94 @@ These happen automatically once the schema is v2:
   GraphQL client (`https://api.runpod.io/graphql`, `gpuTypes` query,
   `securePrice` / `communityPrice` / `secureSpotPrice` /
   `communitySpotPrice`).
+
+---
+
+## Additive changes since schema_version: 2 (no migration required)
+
+All changes below preserve existing YAMLs. Opt in per-field by setting
+the new key; omit to keep prior behavior.
+
+### Runtime CLI (v0.3.x)
+
+- v0.3.0 — pricing intelligence (`gpu-prices`, `--max-gpu-price`,
+  `gpu-list` price column), forensic CLIs (`ls-runs`, `compare-runs`,
+  `events`, `estimate`), `capture-env`, `manifest-summary`.
+- v0.3.1 — `runpod-deploy run --var KEY=VALUE` (repeatable) +
+  `--vars-file PATH` (JSON). Template variables injected at the
+  ctx.variables layer; chained against built-ins and YAML `variables:`.
+- v0.3.2 — `runpodctl` flag feature-detection (probes
+  `runpodctl pod create --help` once per process, gates
+  `--spot`/`--min-vcpu-count`/`--min-memory-in-gb` emission).
+- v0.3.3 — template rendering wired into `run.script_path`,
+  `run.log_path`, `run.success_marker`, `run.failure_markers`.
+
+### YAML additions (v0.4)
+
+- **`run.script_path` / `log_path` / `success_marker` / `failure_markers`**
+  now template-render (v0.3.3 fix).
+- **`name` / `run_id_prefix`** now template-render against the
+  fully-merged variable dict — a YAML with `name: demo-{seed}` produces
+  `demo-42` as the pod's `--name` when invoked with `--var seed=42`
+  (v0.4.0).
+- **`staging[].excludes_default: bool = false`** — opt in to the
+  hygiene preset (`.git/`, `.venv/`, caches).
+- **`staging[].excludes_extra: list[str] = []`** — additional patterns
+  appended after `excludes_default` + `excludes`.
+
+### CLI additions (v0.4)
+
+- **`runpod-deploy run --print-run-dir`** — emits `RUN_DIR=<path>`
+  to stdout right after run-dir resolution. Intended for
+  parallel-sweep drivers needing a machine-parseable run-dir handle.
+- **`runpod-deploy run_job(..., print_run_dir=bool)`** — library-level
+  kwarg mirroring the CLI flag.
+
+### YAML additions (v0.5)
+
+- **`pod.python_version: str | None = None`** — when set to
+  `3.MINOR` or `3.MINOR.PATCH` (pre-release suffixes rejected),
+  the orchestrator auto-injects a preflight step that runs
+  `uv python install <ver> && cd <staging-destination> && uv python pin <ver>`.
+
+### CLI additions (v0.5)
+
+- **`runpod-deploy events-query`** — aggregates `events.jsonl` across
+  run dirs under `--root DIR`. Filter syntax: `--filter KEY=VALUE`
+  (repeatable, AND-semantics), `--since DURATION` (`30s`/`5m`/`1h`/`7d`),
+  `--json` for JSONL output (default: human table).
+- **`runpod-deploy manifest-summary --root DIR`** — walks DIR
+  recursively for `runpod_deploy_pull_manifest.json` files; prints a
+  per-run summary block plus a `== TOTALS ==` footer (manifest count,
+  failure count, summed wall_time_sec, summed estimated_cost_usd).
+
+---
+
+## When we will bump SCHEMA_VERSION
+
+A bump is warranted when:
+
+1. **A field's type changes** — e.g., `pod.gpu_order` going from
+   `list[str]` to `list[GpuPriority]` mappings. Old YAMLs break;
+   strict-loader raises.
+2. **A field is removed** — e.g., dropping `state_file` because the
+   orchestrator handles state internally.
+3. **A field's semantics change in an observable way for unchanged
+   YAMLs** — e.g., changing `stop.on_failure` default from `true` to
+   `false`; an unchanged YAML now behaves differently.
+4. **A required-field structure changes** — e.g., flattening `pod` +
+   `storage` into a single block.
+
+A bump is NOT warranted when:
+
+- New optional field added with falsy default.
+- Internal validation gets stricter (catches things that were always
+  bugs).
+- Orchestrator behavior changes for internal-only reasons (feature
+  detection, auto-injection that an existing YAML can't reference).
+- New CLI subcommand or flag.
+
+If a bump becomes necessary, the migration doc gets a new section
+following the v1→v2 template above (`## Migrating configs from vN to
+vN+1`), with required edits + optional new fields + behavioral
+changes + things that did NOT change.

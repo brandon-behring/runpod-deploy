@@ -6,6 +6,31 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`MIGRATION.md`** expanded with a schema-versioning policy
+  preamble (additive-vs-bump criteria) and a summary of every
+  additive change since `schema_version: 2` (the v0.3.x runtime
+  additions, v0.4 YAML field additions for staging + name/prefix
+  rendering, v0.4 CLI additions for `--print-run-dir`, v0.5 YAML
+  additions for `pod.python_version`, v0.5 CLI additions for
+  `events-query` + `manifest-summary --root`). Closes with a "When
+  we will bump SCHEMA_VERSION" rubric distinguishing changes that
+  warrant a bump (type changes, removal, semantic shifts on
+  existing fields) from those that don't (additive optional fields,
+  internal-only behavior, new CLI surface).
+- **`docs/extending.md`** rewritten from a 23-line stub into a
+  three-audience guide: consumers (no-fork CLI/YAML patterns),
+  library users (`from runpod_deploy import ...` API surface +
+  the don'ts), contributors (SRP boundary, recipe/schema/CLI
+  contribution checklists, coding standards summary, golden-file
+  update workflow).
+- **`docs/config-reference.md`** expanded with an annotated minimal
+  config showing every required section + the most common optional
+  fields, plus a template-variables explainer (built-ins table,
+  custom-variable declaration patterns, CLI `--var` semantics, the
+  two-pass rendering chain).
+
+### Added
+
 - **`docs/troubleshooting.md`** — new ~400-line catalog of known
   failure modes organized by lifecycle phase. Consolidates the prior
   `runpod-gotchas.md` content with every CHANGELOG-distilled issue
