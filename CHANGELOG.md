@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-15 — comparative-gap audit (argcomplete + CodeQL + AGENTS.md + doctest gate)
+
 ### Added
 
 - **`pytest-markdown-docs` doctest gate** — fenced Python blocks in
