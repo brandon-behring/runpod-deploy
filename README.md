@@ -12,26 +12,30 @@ job configs and project commands.
 ## Quickstart
 
 ```bash
-uv venv
-uv pip install -e ".[dev]"
+pip install runpod-deploy
 
+# Smoke-test with the bundled hello example (no RunPod account needed):
+runpod-deploy run --config examples/hello/hello.yaml --offline-dry-run
+
+# Or against the cheapest end-to-end pipeline:
 runpod-deploy validate --config examples/smoke/a4000_smoke.yaml
 runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
-runpod-deploy logs --config examples/smoke/a4000_smoke.yaml         # live-tail the active pod's run log
-runpod-deploy stop --state-file ~/.runpod-smoke-current              # stop the active pod
+runpod-deploy logs --config examples/smoke/a4000_smoke.yaml          # live-tail the active pod's run log
+runpod-deploy stop --state-file ~/.runpod-smoke-current               # stop the active pod
 ```
-
-Optional: enable pre-commit hooks (`pip install pre-commit && pre-commit
-install`). `make lint` remains the canonical enforcement path; CI runs it.
 
 `--offline-dry-run` prints the provision/stage/launch/pull/stop command shape
 without calling `runpodctl`, SSH, or rsync. For a real end-to-end deploy on a
-cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it walks
-through the per-host setup (SSH key registration, rsync version) once.
+cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it
+walks through the per-host setup (SSH key registration, rsync version) once.
 
 For new consumers, [`docs/quickstart.md`](docs/quickstart.md) is the 5-minute
 onboarding walkthrough, and [`docs/lifecycle.md`](docs/lifecycle.md) explains
 what happens at each phase of a `runpod-deploy run`.
+
+**Contributors**: see [`CONTRIBUTING.md`](CONTRIBUTING.md) for the editable
+install (`uv pip install -e ".[dev]"`), pre-commit setup, and the
+fork → branch → PR → CI flow.
 
 ## Examples
 

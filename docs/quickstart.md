@@ -27,11 +27,13 @@ walk, see [`lifecycle.md`](lifecycle.md).
 ## 1. Install runpod-deploy
 
 ```bash
-git clone https://github.com/brandon-behring/runpod-deploy.git
-cd runpod-deploy
-uv venv
-uv pip install -e ".[dev]"
-source .venv/bin/activate
+pip install runpod-deploy
+```
+
+Or with `uv`:
+
+```bash
+uv pip install runpod-deploy
 ```
 
 Verify:
@@ -42,6 +44,10 @@ runpod-deploy --help
 
 You should see the subcommand list including `validate`, `run`,
 `gpu-list`, `manifest-summary`, `events-query`, ...
+
+> **For contributors**: see [`CONTRIBUTING.md`](../CONTRIBUTING.md) for
+> the editable-install flow (`git clone` + `uv pip install -e ".[dev]"`),
+> pre-commit setup, and the contribution guidelines.
 
 ---
 
@@ -124,6 +130,15 @@ basic `validate` (without `--all`) only checks schema correctness.
 ---
 
 ## 4. Walk the pipeline without provisioning
+
+For an **absolute-minimum** walkthrough that needs no RunPod account or
+SSH key registration, use the bundled `hello` example:
+
+```bash
+runpod-deploy run --config examples/hello/hello.yaml --offline-dry-run
+```
+
+Or use the (more realistic) smoke config:
 
 ```bash
 runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
