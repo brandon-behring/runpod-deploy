@@ -6,6 +6,20 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`tests/test_recipe_examples.py`** — new doc-drift catcher. Walks
+  every Markdown file under `docs/`, extracts every ```yaml fenced
+  block, and feeds the ones that look like full job configs
+  (`schema_version:` at column 0) into `load_job_spec`. Snippets
+  (no `schema_version:`) are skipped — they're partial and can't be
+  validated without context. Catches the failure mode where a doc
+  example silently rots when the schema evolves. 15 parametrized
+  tests collected at session start; in v0.7.0, 3 are full configs
+  that parse (the annotated minimal in `config-reference.md` and
+  the quickstart's example YAML) and 12 are correctly-skipped
+  snippets. A deliberately-broken full config in a doc would surface
+  with the recipe path + block index + YAML body in the failure
+  output.
+
 - **5 new integration tests** in `tests/test_integration.py` exercising
   the full `run_job` lifecycle via `--offline-dry-run`. Catches
   *cross-feature* regressions that per-PR unit tests miss:
