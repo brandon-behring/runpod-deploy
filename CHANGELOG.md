@@ -6,6 +6,26 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`runpod-deploy events-query`** new subcommand. Aggregates
+  `events.jsonl` rows across every run directory under `--root DIR`
+  (defaults to `artifacts/runpod`), optionally filtered by
+  `--filter KEY=VALUE` (repeatable, AND-semantics, exact-string match
+  on any event field) and/or `--since DURATION` (short-form duration:
+  `30s`, `5m`, `1h`, `7d`; events with unparseable `ts_utc` are dropped
+  when `--since` is set). Default output is a compact human-readable
+  table per event: `[ts_utc] <run_dir_leaf> <event> k=v k=v ...`.
+  `--json` opts into JSONL (one row per event with an added `run_dir`
+  field). Replaces the prior `grep -q '"event": "pod_killed_unexpected"'
+  artifacts/runpod/*/events.jsonl` shell workaround documented in
+  several recipes; designed for post-sweep forensic analysis ("which
+  DCs failed over most often this month?"). 21 new tests in
+  `tests/test_cli_events_query.py` cover the duration / filter parse
+  helpers and the end-to-end aggregation, multi-filter AND-semantics,
+  --since window, --json JSONL emission, multi-run-dir rglob walk,
+  missing-dir fail-fast, and empty/no-match info-log behavior. Two new
+  pure helpers exposed for tests: `_parse_duration` and
+  `_parse_filter_arg`. Closes #20.
+
 - **`runpod-deploy manifest-summary --root DIR`** mode. The
   `manifest-summary` subcommand gains an optional `--root DIR` argument
   that walks the directory recursively for every
