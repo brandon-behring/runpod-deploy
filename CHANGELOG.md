@@ -4,6 +4,27 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/lifecycle.md`** — new ~260-line walkthrough of the
+  `runpod-deploy run` pipeline, phase by phase: validate → provision →
+  SSH wait → setup → stage + secrets + preflight + launch + monitor →
+  artifact pull → stop → manifest write. Maps every YAML section to
+  its phase + function, documents where v0.4 (`--print-run-dir`,
+  `excludes_default`/`excludes_extra`, rendered `name`/`run_id_prefix`)
+  and v0.5 (`pod.python_version` auto-injection, `events-query`,
+  `manifest-summary --root`) features slot in, plus the failure-flow
+  semantics (run_started gating, manifest-always-writes-in-finally).
+  Replaces the implicit "read the orchestrator source to understand
+  the lifecycle" tax that previously existed.
+- **`docs/quickstart.md`** — new ~180-line consumer onboarding doc.
+  5-minute walkthrough from `git clone` through prerequisites → install →
+  read the example YAML → `validate` → `--offline-dry-run` → live
+  RTX A4000 run → forensic inspection. Heavier than the README's
+  Quickstart block; intended as the first stop for new consumers.
+- **`README.md`** — pointer added linking to `docs/quickstart.md` and
+  `docs/lifecycle.md` so new readers find the deeper onboarding path.
+
 ## [0.5.0] - 2026-05-15 — forensics + reproducibility (post-V5 backlog completion)
 
 ### Added

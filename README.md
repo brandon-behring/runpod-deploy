@@ -24,6 +24,10 @@ without calling `runpodctl`, SSH, or rsync. For a real end-to-end deploy on a
 cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it walks
 through the per-host setup (SSH key registration, rsync version) once.
 
+For new consumers, [`docs/quickstart.md`](docs/quickstart.md) is the 5-minute
+onboarding walkthrough, and [`docs/lifecycle.md`](docs/lifecycle.md) explains
+what happens at each phase of a `runpod-deploy run`.
+
 ## Examples
 
 | Config | What it does |
