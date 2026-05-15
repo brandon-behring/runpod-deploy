@@ -23,3 +23,16 @@ repos:
     hooks:
       - id: black
         language_version: python3.13
+  - repo: local
+    hooks:
+      # mypy runs at pre-push (NOT pre-commit) so commit cycles stay
+      # fast. Uses the exact venv-pinned mypy via `make lint` style
+      # invocation; no version drift between pre-commit and CI.
+      - id: mypy
+        name: mypy
+        entry: .venv/bin/python -m mypy
+        args: [src]
+        language: system
+        types: [python]
+        stages: [pre-push]
+        pass_filenames: false

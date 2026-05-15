@@ -37,6 +37,17 @@ dev = [
     "black>=26.0",
     "mypy>=1.10",
     "types-PyYAML",
+    # argcomplete is also exposed as a standalone [completion] extra
+    # for end-users; included here so mypy + tests can see it locally
+    # and in CI.
+    "argcomplete>=3.5",
+]
+# Optional shell-completion support. Install via:
+#   pip install runpod-deploy[completion]
+# then activate per shell:
+#   eval "$(register-python-argcomplete runpod-deploy)"   # bash/zsh
+completion = [
+    "argcomplete>=3.5",
 ]
 
 [project.scripts]

@@ -4,6 +4,33 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`argcomplete` shell completion** (opt-in via new `[completion]`
+  extra). `pip install runpod-deploy[completion]` + a one-line `eval`
+  in shell rc enables Bash/Zsh tab-completion of subcommands + flags.
+  Implementation: `PYTHON_ARGCOMPLETE_OK` marker at the top of
+  `src/runpod_deploy/cli.py` + a guarded `import argcomplete` block
+  before `parser.parse_args`. The base package stays lean — no
+  consumer pays the dep cost unless they want completion. Docs:
+  README quickstart + CONTRIBUTING.md activation note.
+- **`.github/workflows/codeql.yml`** — GitHub's static security
+  scanner for Python. Triggers: push to main + pull_request +
+  weekly cron (Mon 03:30 UTC, same cadence as dependabot).
+  Complements the existing `pip-audit` job (which scans declared
+  dependency CVEs) by analyzing our own source code for common
+  vulnerability patterns. Query set: `security-and-quality`.
+- **pepy.tech downloads badge** in `README.md` (alongside the
+  existing 4 badges). Visible install-volume signal.
+- **`mypy` pre-push hook** in `.pre-commit-config.yaml`. Local hook
+  reusing `.venv/bin/python -m mypy src` for zero version drift with
+  `make lint`. Stage: `pre-push` (commit cycles stay fast at
+  ~0.1s; push-time gate adds ~1–3s before remote push). Activated
+  via `pre-commit install --hook-type pre-push`.
+- **`.github/CODEOWNERS`** — auto-review-request for every PR.
+  Currently `* @brandon-behring` (solo maintainer); easy to extend
+  if/when collaborators arrive.
+
 ## [0.7.5] - 2026-05-15 — post-publish polish (discoverability + hello example + wheel CI)
 
 ### Added

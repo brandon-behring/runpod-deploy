@@ -1,0 +1,47 @@
+name: codeql
+
+# GitHub's static security scanner. Complements pip-audit (which scans
+# declared deps for CVEs) by analyzing our own source code for common
+# vulnerability patterns. Free for public repos.
+#
+# Triggers:
+#   - push to main: catches regressions at merge time
+#   - pull_request: catches regressions at review time
+#   - weekly schedule: catches new CVE patterns published against
+#     already-merged dormant code
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Monday 03:30 UTC — same cadence as dependabot's weekly cycle.
+    - cron: "30 3 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          # Default query set: security-and-quality (includes
+          # security-extended). Override to "security-extended" only if
+          # the quality queries become noisy.
+          queries: security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"

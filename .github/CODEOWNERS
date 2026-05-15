@@ -1,0 +1,5 @@
+# Auto-review-request for every PR.
+# Format: <path-pattern> <owner1> <owner2> ...
+# Docs: https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+
+*       @brandon-behring
