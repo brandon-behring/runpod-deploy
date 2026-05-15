@@ -4,7 +4,64 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-15 — hotfix CI gates from v0.7.2
+
+### Fixed
+
+- **`test-base-install` CI job**: the smoke-import block in
+  `.github/workflows/test.yml` listed 7 symbols that were *not* in
+  fact re-exported from `runpod_deploy/__init__.py`
+  (`build_job_context`, `validate_local_paths`, `SecretSpec`,
+  `SCHEMA_VERSION`, `STORAGE_NETWORK_VOLUME`, `STORAGE_EPHEMERAL`,
+  `DEFAULT_STAGING_EXCLUDES`). Added all 7 to the package-level
+  `from runpod_deploy.config import ...` block + the `__all__`
+  manifest. Brings the actual re-export surface into agreement with
+  what `docs/extending.md` §2 documents as the public API.
+- **`security` CI job (`pip-audit`)**: `--disable-pip` is only valid
+  with `--requirement <file>` (not with the default venv-audit
+  invocation). Removed the flag; the job now runs `uv run pip-audit`
+  which audits the resolved venv directly. Result on baseline
+  v0.7.2: "No known vulnerabilities found" — green.
+
+### Why this is a same-day hotfix
+
+The v0.7.2 push triggered the test workflow which exposed both
+issues. Three pending dependabot PRs (`actions/checkout` v5→v6,
+`actions/upload-artifact` v4→v7, `actions/download-artifact` v4→v8)
+were also failing on the same two errors; merging this hotfix on
+main should auto-clear their CI runs since they rebase against
+main.
+
+## [0.7.2] - 2026-05-15 — governance hardening (ported from eval-toolkit + temporalcv)
+
 ### Added
+
+- **`.github/PULL_REQUEST_TEMPLATE.md`** — auto-surfaced on every PR.
+  Sections for Summary / Testing checklist / Risk level / Documentation
+  updates / Linked issues. The Testing checklist includes a "golden
+  files reviewed (`tests/fixtures/golden/*.txt`) — only intentional
+  changes" line so reviewers don't miss UX-contract drift.
+- **`.github/ISSUE_TEMPLATE/`** — three forms: `bug_report.yml`,
+  `feature_request.yml`, `config.yml`. The bug form asks for the
+  failing lifecycle phase (mapped to `docs/lifecycle.md` §1–8) so
+  triage can route quickly. The feature form has an SRP-boundary
+  checkbox referencing `docs/extending.md` §3 so out-of-scope
+  proposals self-flag at submission. The config router disables
+  blank issues + links to `SECURITY.md`, `docs/troubleshooting.md`,
+  and `docs/recipes/README.md`.
+- **`scripts/audit_raises_sections.py`** + `make audit-docstrings` —
+  AST-based audit that walks `src/runpod_deploy/`, finds every
+  function with a `Raises:` docstring section, and compares the
+  documented exception types against actual `raise X(...)` sites
+  in the function body. Reports stale entries (documented but
+  never raised) and undeclared entries (raised but not in
+  `Raises:`). Currently green: 13 files audited, all matches.
+  Catches drift the moment someone adds a `Raises:` section in
+  a future PR.
+- **Pre-commit `check-added-large-files`** with a 500KB ceiling.
+  Catches accidental commits of model weights, datasets, build
+  artifacts. Bumpable via `--maxkb=N` if a legitimate large
+  fixture is needed.
 
 - **`.github/dependabot.yml`** — weekly grouped dependency updates
   for pip + github-actions ecosystems. Minor + patch updates batch
