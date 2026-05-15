@@ -4,6 +4,18 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`pyproject.toml` `[project.urls]`**: adds Homepage, Source, Issues,
+  Changelog, Documentation, Releases — all linking to the GitHub repo
+  + relevant files. Renders in the PyPI sidebar and on
+  `pip show runpod-deploy`. Previously the PyPI page had no outbound
+  links at all (`home_page: None`, `project_urls: None`).
+- **`README.md` badges**: PyPI version, CI status, supported Python
+  versions, license. Visible-trust signal for first-time visitors;
+  also surfaces "is the latest tag's CI passing?" without navigating
+  to Actions.
+
 ## [0.7.4] - 2026-05-15 — CI hygiene: node24 actions + dependabot policy + test-isolation fix
 
 ### Changed

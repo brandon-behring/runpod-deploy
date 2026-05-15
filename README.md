@@ -1,5 +1,10 @@
 # runpod-deploy
 
+[![PyPI version](https://img.shields.io/pypi/v/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
+[![CI](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml/badge.svg)](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml)
+[![Python](https://img.shields.io/pypi/pyversions/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
+[![License](https://img.shields.io/pypi/l/runpod-deploy.svg)](https://github.com/brandon-behring/runpod-deploy/blob/main/LICENSE)
+
 `runpod-deploy` is a config-driven RunPod orchestration package for reusable
 GPU project deployments. It owns the RunPod mechanics; consumer repos own their
 job configs and project commands.
