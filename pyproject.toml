@@ -91,6 +91,7 @@ markers = [
     "unit: Pure contract tests",
     "smoke: End-to-end dry-run tests",
     "network: Live RunPod tests; excluded from default use",
+    "golden: Golden-file CLI snapshot tests; regenerate via --update-goldens",
 ]
 
 [tool.coverage.run]

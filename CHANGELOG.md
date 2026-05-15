@@ -6,6 +6,28 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`tests/test_cli_golden.py` + `tests/fixtures/golden/*.txt`** — new
+  golden-file snapshot tests locking CLI output stability across 7
+  subcommands: `manifest-summary` (single + `--root`), `events-query`
+  (default table + `--json`), `ls-runs`, `compare-runs`, `events`.
+  Each test invokes the CLI with a deterministic fixture, normalizes
+  tmp-path placeholders to `<TMP>` and timestamp leaves to `<TS>`,
+  and compares stdout against a checked-in `.txt` golden file. New
+  `golden` pytest marker registered. Update mode via
+  `pytest tests/test_cli_golden.py --update-goldens` regenerates the
+  fixtures; the workflow + safety guidance is documented in
+  `docs/extending.md`. Each golden is small (~5–25 lines), diff-friendly
+  for review. Catches accidental output-format drift — e.g., a
+  refactor of `_format_manifest_summary` that adds/removes a field
+  would surface as a golden-file mismatch with a clear regenerate
+  pointer.
+
+- **`tests/conftest.py`** — adds the `--update-goldens` pytest option +
+  matching `update_goldens` fixture used by `test_cli_golden.py`.
+
+- **`pyproject.toml`** — registers the new `golden` pytest marker
+  alongside `unit` / `smoke` / `network`.
+
 - **`tests/test_recipe_examples.py`** — new doc-drift catcher. Walks
   every Markdown file under `docs/`, extracts every ```yaml fenced
   block, and feeds the ones that look like full job configs

@@ -1,0 +1,23 @@
+job:           demo
+run_id:        demo-<TS>
+failed:        False
+schema:        v2
+pod_id:        pod-abc
+gpu:           NVIDIA H100 80GB HBM3
+datacenter:    US-GA-2
+image:         runpod/pytorch:2.4.0
+storage:       ephemeral
+wall_time_sec: 1842.4
+price_usd/hr:  4.18 (pod_describe)
+est_cost_usd:  2.14
+cost_cap_usd:  8.0
+final_state:   EXITED
+deploy_metadata:
+  local_git_sha: abcd1234
+  local_git_dirty: False
+  payload_lockfile: uv.lock
+artifacts:
+  - results: status=success duration_sec=3.2
+telemetry_files:
+  - nvidia_smi_start.txt
+  - events.jsonl
