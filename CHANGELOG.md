@@ -6,6 +6,25 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`docs/troubleshooting.md`** — new ~400-line catalog of known
+  failure modes organized by lifecycle phase. Consolidates the prior
+  `runpod-gotchas.md` content with every CHANGELOG-distilled issue
+  from the v0.1.x → v0.5.x cycle (runpodctl flag mismatches, GPU
+  stock-out + name validation, SSH key sync nuance, network-volume
+  DC pinning, CUDA wheel pinning, rsync-missing-in-base-image,
+  secrets-on-ephemeral-storage, flash_attention_2 portability,
+  pod_killed_unexpected detection, sweep-driver pitfalls,
+  predictions-discipline). Each entry: Symptom → Diagnosis → Fix.
+  Includes a "Forensic recovery" section pointing at `events-query`,
+  `manifest-summary --root`, `compare-runs`, `ls-runs`, `events`.
+  Designed to be the first stop when something breaks.
+
+- **`docs/runpod-gotchas.md`** — converted to a one-page redirect
+  pointing at `docs/troubleshooting.md`. Preserves any inbound links
+  while consolidating the content.
+
+### Added
+
 - **`docs/lifecycle.md`** — new ~260-line walkthrough of the
   `runpod-deploy run` pipeline, phase by phase: validate → provision →
   SSH wait → setup → stage + secrets + preflight + launch + monitor →
