@@ -15,7 +15,6 @@ All marked `@pytest.mark.smoke` (runs in default `make test`).
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -382,6 +381,3 @@ def test_integration_module_loads() -> None:
     import tests.test_integration as _
 
     assert hasattr(_, "test_integration_composed_v0_4_and_v0_5_features")
-
-
-_ = json  # silence unused-import warnings if json is referenced lazily

@@ -4,6 +4,27 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`examples/README.md`** — new index for the `examples/` tree. Lists
+  each example by use case + per-directory contents + the standard
+  "how to use an example" recipe (copy → edit → validate → dry-run →
+  live). Mirrors the pattern of `docs/recipes/README.md`.
+- **`CONTRIBUTING.md`** — new top-level contributor entry-point.
+  GitHub auto-surfaces this on PR pages. Short doc pointing at
+  `docs/extending.md` §3 for the detailed checklists + the SRP-boundary
+  rationale, plus the canonical fork→branch→PR→CI flow.
+- **`--dry-run` vs `--offline-dry-run`** distinction now documented in
+  both `docs/lifecycle.md` and `docs/config-reference.md` with a
+  comparison table. Closes the long-standing gap where the two flags
+  existed in argparse but were never explained side-by-side.
+
+### Removed
+
+- Dead `import json` + `_ = json` workaround line in
+  `tests/test_integration.py`. The defensive add was stale; no
+  `json.*` is referenced in the file body.
+
 ## [0.7.0] - 2026-05-15 — edge-case rigor + integration + golden-file contracts
 
 ### Added
