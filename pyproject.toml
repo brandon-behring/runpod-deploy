@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runpod-deploy"
-version = "0.7.1"
+version = "0.7.2"
 description = "Config-driven RunPod orchestration for reusable GPU project deployments."
 readme = "README.md"
 license = "MIT"

@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-15 — governance hardening (ported from eval-toolkit + temporalcv)
+
 ### Added
 
 - **`.github/PULL_REQUEST_TEMPLATE.md`** — auto-surfaced on every PR.
