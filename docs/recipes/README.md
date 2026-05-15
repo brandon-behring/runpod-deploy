@@ -41,3 +41,6 @@ domain logic.
   transformer scorers degrade gracefully when the GPU class doesn't
   support `flash_attention_2` (portability across the GPU-failover
   pool).
+- [`reproducibility.md`](reproducibility.md) — `pod.python_version`
+  YAML field + `uv python install/pin` auto-injection to lock the
+  CPython interpreter version across sweep runs.

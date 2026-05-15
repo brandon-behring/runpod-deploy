@@ -108,6 +108,7 @@ def _parse_pod(raw: Mapping[str, Any]) -> PodSpec:
             "spot",
             "min_vcpu_count",
             "min_memory_gb",
+            "python_version",
         },
     )
     return PodSpec(
@@ -121,6 +122,7 @@ def _parse_pod(raw: Mapping[str, Any]) -> PodSpec:
         spot=_as_bool(raw.get("spot", False), "pod.spot"),
         min_vcpu_count=_optional_int(raw.get("min_vcpu_count"), "pod.min_vcpu_count"),
         min_memory_gb=_optional_int(raw.get("min_memory_gb"), "pod.min_memory_gb"),
+        python_version=_optional_str(raw.get("python_version"), "pod.python_version"),
     )
 
 
