@@ -299,3 +299,89 @@ run:
     assert ctx.render(spec.run.script_path) == "/workspace/run-s42.sh"
     assert ctx.render(spec.run.log_path) == "/workspace/run-s42.log"
     assert ctx.render(spec.run.success_marker) == "job-s42 DONE"
+
+
+@pytest.mark.unit
+def test_name_and_run_id_prefix_render_cli_variables(tmp_path: Path) -> None:
+    """`name` and `run_id_prefix` top-level YAML fields get CLI-var expansion.
+
+    Regression for #18: v0.3.3 fixed rendering for the four `run.*` path /
+    marker fields but left `name` and `run_id_prefix` raw — so a YAML with
+    ``name: demo-{seed}`` produced a pod named literally ``demo-{seed}``
+    (the literal substring survived into ``runpodctl pod create --name``
+    via ``ctx.run_id``). build_job_context now renders both against the
+    fully-merged variables dict.
+    """
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("""
+schema_version: 2
+name: demo-{seed}
+run_id_prefix: demo-{backbone}
+local:
+  project_root: .
+  required_paths: []
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "DONE"
+  body: |
+    echo DONE
+""")
+    spec = load_job_spec(config_path)
+    # Spec values are stored raw.
+    assert spec.name == "demo-{seed}"
+    assert spec.run_id_prefix == "demo-{backbone}"
+
+    ctx = build_job_context(spec, config_path, cli_variables={"seed": "42", "backbone": "deberta"})
+    # `ctx.variables["job_name"]` is the rendered name (used by user
+    # configs that reference {job_name} elsewhere).
+    assert ctx.variables["job_name"] == "demo-42"
+    # `ctx.run_id` is the rendered run_id_prefix + timestamp (used by
+    # provider.py:285 to set `runpodctl pod create --name <run_id>`).
+    assert ctx.run_id.startswith("demo-deberta-")
+    assert "{backbone}" not in ctx.run_id
+    # `ctx.variables["run_id"]` matches `ctx.run_id`.
+    assert ctx.variables["run_id"] == ctx.run_id
+
+
+@pytest.mark.unit
+def test_run_id_prefix_default_to_name_also_renders(tmp_path: Path) -> None:
+    """When `run_id_prefix` is omitted, it defaults to `name` — which must
+    also be rendered (the default-assignment happens in __post_init__
+    before any rendering, so the prefix inherits the raw name template)."""
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text("""
+schema_version: 2
+name: demo-{seed}
+local:
+  project_root: .
+  required_paths: []
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "DONE"
+  body: |
+    echo DONE
+""")
+    spec = load_job_spec(config_path)
+    assert spec.name == "demo-{seed}"
+    assert spec.run_id_prefix == "demo-{seed}"  # defaulted from name
+
+    ctx = build_job_context(spec, config_path, cli_variables={"seed": "7"})
+    assert ctx.variables["job_name"] == "demo-7"
+    assert ctx.run_id.startswith("demo-7-")
+    assert "{seed}" not in ctx.run_id

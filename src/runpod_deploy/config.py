@@ -416,7 +416,6 @@ def build_job_context(
     """
     config = Path(config_path).resolve()
     stamp = timestamp or datetime.now(UTC)
-    run_id = stamp.strftime(f"{spec.run_id_prefix}-%Y%m%dT%H%M%SZ")
     config_dir = config.parent
     project_root = resolve_relative_path(spec.local.project_root, base=config_dir)
     if project_root == Path.home():
@@ -427,11 +426,15 @@ def build_job_context(
             "configs/runpod/), not '../../..'."
         )
     run_dir = project_root / "artifacts" / "runpod" / stamp.strftime("%Y%m%dT%H%M%SZ")
+    # Pass 1: build base variables with the raw spec.name / spec.run_id_prefix
+    # values so YAML- and CLI-supplied variables can be rendered (most don't
+    # reference {job_name}/{run_id}, but a few example configs do).
+    raw_run_id = stamp.strftime(f"{spec.run_id_prefix}-%Y%m%dT%H%M%SZ")
     variables: dict[str, str] = {
         "config_dir": str(config_dir),
         "project_root": str(project_root),
         "run_dir": str(run_dir),
-        "run_id": run_id,
+        "run_id": raw_run_id,
         "job_name": spec.name,
         "volume_mount": spec.storage.volume_mount,
     }
@@ -440,6 +443,16 @@ def build_job_context(
     if cli_variables:
         for key, value in cli_variables.items():
             variables[key] = render_template(value, variables)
+    # Pass 2: now that variables (incl. CLI --var seed=42) are fully merged,
+    # render spec.name + spec.run_id_prefix against them and update the two
+    # derived entries. This is what makes `name: demo-{seed}` and
+    # `run_id_prefix: demo-{seed}` expand to `demo-42` instead of surviving
+    # as a literal `{seed}` substring in the pod name + manifest.
+    rendered_name = render_template(spec.name, variables)
+    rendered_run_id_prefix = render_template(spec.run_id_prefix, variables)
+    run_id = stamp.strftime(f"{rendered_run_id_prefix}-%Y%m%dT%H%M%SZ")
+    variables["job_name"] = rendered_name
+    variables["run_id"] = run_id
     return JobContext(
         config_path=config,
         spec=spec,

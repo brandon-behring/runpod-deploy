@@ -4,6 +4,28 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`name` and `run_id_prefix` top-level YAML fields now get
+  template-variable expansion.** v0.3.3 closed the parity gap for the
+  four `run.*` path / marker fields but left these two raw — so a
+  YAML with ``name: demo-{seed}`` produced a pod named literally
+  `demo-{seed}` (the literal substring survived through
+  ``ctx.run_id`` into `runpodctl pod create --name <run_id>` at
+  `provider.py:285` and into the manifest). `build_job_context` now
+  runs a second-pass render of `spec.name` and `spec.run_id_prefix`
+  against the fully-merged variables dict (built-ins + YAML
+  `variables:` + CLI `--var`), then updates `variables["job_name"]`
+  and `variables["run_id"]` with the rendered values. `spec.name` and
+  `spec.run_id_prefix` stay raw on the frozen dataclass (parse
+  preserved); the rendered values flow through `ctx.run_id` /
+  `ctx.variables`. 2 new regression tests in `tests/test_var_flag.py`
+  cover the explicit-prefix case and the `run_id_prefix → name`
+  default-inheritance case. Closes #18. Surfaced by
+  `prompt-injection-v5` driver work; cosmetic-only (runpodctl accepts
+  the literal `{seed}` in pod names) but the inconsistency surprised
+  driver authors writing templated YAMLs.
+
 ### Added
 
 - **`runpod-deploy run --print-run-dir`** flag. When set, emits a
