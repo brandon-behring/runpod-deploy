@@ -6,6 +6,26 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **5 new integration tests** in `tests/test_integration.py` exercising
+  the full `run_job` lifecycle via `--offline-dry-run`. Catches
+  *cross-feature* regressions that per-PR unit tests miss:
+  - **I1** — Composed v0.4+v0.5 features in one config: `--var` +
+    rendered `name`/`run_id_prefix` + `--print-run-dir` + rendered
+    `run.script_path`/`log_path` + `staging.excludes_default` +
+    `excludes_extra` + `pod.python_version` auto-inject. Asserts
+    every feature's signature in the log/stdout.
+  - **I2** — Minimum-viable config (empty setup/staging/preflight/
+    artifacts): catches regressions where a feature assumes a
+    non-empty list.
+  - **I3** — Max-coverage config: every optional field set to a
+    non-default; schema-surface smoke test.
+  - **`print_run_dir` layout invariant** — RUN_DIR path lives under
+    `<project_root>/artifacts/runpod/`. Locks the path-resolution
+    contract that all CLIs + drivers depend on.
+  - **Module-import sanity** — the integration suite imports cleanly
+    without side effects.
+  All marked `@pytest.mark.smoke` (runs in default `make test`).
+
 - **8 named-gap regression tests** for edge cases not previously
   exercised across the v0.4 + v0.5 surface:
   - **T1**: `--print-run-dir` line emits on stdout even when `--quiet`
