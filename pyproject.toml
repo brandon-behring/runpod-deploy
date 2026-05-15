@@ -41,6 +41,10 @@ dev = [
     # for end-users; included here so mypy + tests can see it locally
     # and in CI.
     "argcomplete>=3.5",
+    # Doctest fenced blocks in docs/ + README.md + examples/.
+    # Skips blocks tagged `python notest`. Invoked via `make doctest`
+    # and the `doctest` CI job.
+    "pytest-markdown-docs>=0.9",
 ]
 # Optional shell-completion support. Install via:
 #   pip install runpod-deploy[completion]

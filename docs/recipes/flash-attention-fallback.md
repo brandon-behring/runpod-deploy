@@ -7,7 +7,7 @@ or smaller GPUs in the runpod-deploy GPU-failover pool.
 
 ## Snippet
 
-```python
+```python notest
 import torch
 from transformers import AutoModel
 

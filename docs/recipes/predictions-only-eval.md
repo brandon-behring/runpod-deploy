@@ -52,7 +52,7 @@ uv run python -m piv5.cli.merge \
 Consumers preventing CPU-on-pod regressions ship a pod-contract lint
 test that greps configs for forbidden invocations:
 
-```python
+```python notest
 # tests/unit/test_pod_contract.py
 def test_pod_does_not_run_bootstrap():
     for config in CONFIGS:

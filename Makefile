@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-unit test-smoke type coverage ci build audit-docstrings examples-index clean
+.PHONY: help install lint format test test-unit test-smoke type coverage ci build audit-docstrings examples-index doctest clean
 
 PYTHON := .venv/bin/python
 VENV := .venv
@@ -17,6 +17,7 @@ help:
 	@echo "  build       sdist + wheel (matches GitHub release workflow)"
 	@echo "  audit-docstrings  Check Raises: sections match actual raise sites"
 	@echo "  examples-index   Regenerate the auto-managed section of examples/README.md"
+	@echo "  doctest    Run pytest-markdown-docs against docs/ + README.md + examples/"
 	@echo "  clean       remove caches and build artifacts"
 
 install:
@@ -58,6 +59,9 @@ audit-docstrings:
 
 examples-index:
 	$(PYTHON) scripts/regen_examples_index.py
+
+doctest:
+	$(PYTHON) -m pytest --markdown-docs docs/ README.md examples/
 
 clean:
 	rm -rf build dist *.egg-info
