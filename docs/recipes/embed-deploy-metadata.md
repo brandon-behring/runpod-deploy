@@ -68,3 +68,17 @@ results_manifest = {
 Each field is `null` (with a WARNING) if the source isn't available
 (no git repo, no `uv.lock` or `requirements.txt`). The command never
 raises.
+
+## See also
+
+- [`cost-reconciliation.md`](cost-reconciliation.md) — the same
+  metadata fields are captured into every run's
+  `runpod_deploy_pull_manifest.json` automatically; use
+  `capture-env` when you need them in *your own* manifest (separate
+  from runpod-deploy's).
+- [`local-postprocess-after-run.md`](local-postprocess-after-run.md) —
+  consumer post-processing scripts often join the `capture-env` JSON
+  with the pulled artifacts to build a reproducibility-grade output.
+- [`reproducibility.md`](reproducibility.md) — when paired with
+  `pod.python_version`, the manifest records the third leg of the
+  reproducibility tripod (git SHA + lockfile hash + interpreter pin).

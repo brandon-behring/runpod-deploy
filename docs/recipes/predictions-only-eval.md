@@ -64,3 +64,19 @@ def test_pod_does_not_run_bootstrap():
 
 Cheap to maintain; catches accidental regressions during config-template
 refactors.
+
+## See also
+
+- [`multi-config-sweep.md`](multi-config-sweep.md) — the canonical
+  invocation pattern (per-shard pod runs prediction-only; aggregation
+  happens locally after all shards complete).
+- [`local-postprocess-after-run.md`](local-postprocess-after-run.md) —
+  walks the pulled `predictions_full.parquet` for metrics, bootstrap
+  CIs, paired tests.
+- [`reproducibility.md`](reproducibility.md) — pair with
+  `pod.python_version` to lock the interpreter version across the
+  sweep; otherwise per-row predictions could shift between shards on
+  a 3.13 → 3.14 minor-version bump.
+- [`troubleshooting.md`](../troubleshooting.md) "Predictions
+  discipline" — the failure mode this pattern prevents (recovering
+  per-row scores after pod teardown costs real money).

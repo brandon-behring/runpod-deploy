@@ -40,3 +40,13 @@ failure for a portable-code bug.
 The try/except costs nothing at runtime when flash-attn-2 *is*
 supported (the import / construct succeeds on first try) and turns
 a hard failure into a logged degraded mode on smaller GPUs.
+
+## See also
+
+- [`multi-config-sweep.md`](multi-config-sweep.md) — sweeps that
+  span GPU classes (the typical case for `pod.gpu_order` with
+  multiple entries) hit this exact failure mode without the fallback.
+- [`reproducibility.md`](reproducibility.md) — log which attention
+  implementation was used per shard for audit purposes; pair with
+  `events.emit_event("attn_impl", ...)` from your training code so
+  `events-query` can later answer "which shards fell back?".

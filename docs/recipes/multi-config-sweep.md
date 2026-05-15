@@ -199,3 +199,22 @@ example above.
   so post-processing across the sweep just globs the directory tree.
 - For multi-shard cost reconciliation, see
   [`cost-reconciliation.md`](cost-reconciliation.md).
+
+## See also
+
+- [`cost-reconciliation.md`](cost-reconciliation.md) — `runpod-deploy
+  manifest-summary --root artifacts/runpod` after the sweep prints
+  per-run blocks + a `== TOTALS ==` footer (manifest count, failures,
+  summed wall_time_sec, summed estimated_cost_usd).
+- [`predictions-only-eval.md`](predictions-only-eval.md) — the
+  canonical sweep emits ONLY per-row predictions on GPU; metrics +
+  bootstrap CIs run locally on CPU after all shards complete.
+- [`reproducibility.md`](reproducibility.md) — pair the sweep with
+  `pod.python_version: "3.13.5"` so every shard uses the same
+  interpreter.
+- [`embed-deploy-metadata.md`](embed-deploy-metadata.md) — call
+  `runpod-deploy capture-env` once before the sweep loop to snapshot
+  the git SHA + lockfile hash for the whole sweep.
+- For aggregate forensics:
+  `runpod-deploy events-query --filter event=pod_killed_unexpected --since 7d`
+  (see [`troubleshooting.md`](../troubleshooting.md) "Forensic recovery").
