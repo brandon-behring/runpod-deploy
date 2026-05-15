@@ -6,6 +6,29 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`examples/v0_5_canonical/canonical_sweep_pinned.yaml`** + companion
+  README — realistic sweep config exercising every v0.4 + v0.5 feature
+  in one place: rendered `name`/`run_id_prefix` template fields,
+  `pod.python_version` interpreter pinning, `staging.excludes_default`
+  + `excludes_extra` merge semantics, `run.script_path`/`log_path`/
+  `success_marker` template rendering (v0.3.3), multi-DC failover.
+  Companion README maps each v0.4/v0.5 field to its CHANGELOG entry +
+  doc. Auto-validated by `tests/test_config.py::test_examples_are_schema_valid`.
+- **`examples/smoke/a4000_smoke_pinned.yaml`** — drop-in upgrade of
+  the existing smoke example demonstrating `python_version` +
+  `excludes_default` minimally. Cheap (~$0.05–0.20 on RTX A4000) so
+  consumers can exercise v0.5 end-to-end without a paper-grade
+  workflow.
+- **`examples/forensics/`** — three shell scripts + a README
+  cataloging the most common post-run queries:
+  `cost_reconciliation_one_sweep.sh` (manifest-summary --root with
+  TOTALS), `find_killed_pods.sh` (events-query for
+  `pod_killed_unexpected`), `dc_failover_audit.sh` (events-query for
+  `datacenter_failover`). Pre-built starting points for consumers
+  building their own forensic pipelines.
+
+### Added
+
 - **`docs/recipes/*.md`** all gain a `## See also` section pointing
   at related recipes. Each recipe was previously self-contained;
   consumers now have explicit composition pointers (e.g.,

@@ -1,0 +1,98 @@
+schema_version: 2
+
+# Demonstrates every v0.4 + v0.5 feature in a realistic
+# canonical-sweep config. Run with:
+#   runpod-deploy run --config examples/v0_5_canonical/canonical_sweep_pinned.yaml \
+#     --var seed=42 --var backbone=deberta --print-run-dir \
+#     --cost-cap-usd 2.0 --max-runtime-minutes 60
+#
+# Features exercised:
+#  - v0.4: rendered `name` (canonical-deberta-s42 in pod --name)
+#  - v0.4: --print-run-dir (RUN_DIR=<path> line on stdout)
+#  - v0.4: staging.excludes_default: true (hygiene preset)
+#  - v0.4: staging.excludes_extra (consumer-specific additions)
+#  - v0.5: pod.python_version (uv install+pin auto-injected at preflight[0])
+#  - v0.5: post-run, `runpod-deploy manifest-summary --root artifacts/runpod` aggregates
+#  - v0.5: post-run, `runpod-deploy events-query --filter event=pod_killed_unexpected` audits
+
+name: canonical-{backbone}-s{seed}            # rendered (v0.4 PR-C)
+run_id_prefix: canonical-{backbone}            # rendered
+state_file: ~/.runpod-canonical-current
+
+local:
+  project_root: ../..                          # for a YAML at examples/v0_5_canonical/, this is the repo root
+  required_paths:
+    - pyproject.toml
+
+variables:
+  remote_repo: /workspace/canonical-{backbone}-s{seed}
+
+pod:
+  image: runpod/pytorch:2.4.0-py3.13-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [EU-RO-1, US-CA-2, US-GA-2]    # multi-DC failover for stock-out resilience
+  gpu_order:
+    - NVIDIA H100 80GB HBM3
+    - NVIDIA H100 NVL
+    - NVIDIA A100-SXM4-80GB
+  cloud_type: SECURE
+  python_version: "3.13.5"                     # v0.5 — auto-injects `uv python install + pin` at preflight[0]
+
+storage:
+  mode: ephemeral
+  volume_gb: 50
+
+ssh:
+  key_path: ~/.ssh/id_ed25519
+
+budget:
+  cost_cap_usd: 2.0
+  max_runtime_minutes: 60
+  assumed_hourly_rate_usd: 4.0
+  poll_interval_sec: 30
+
+setup:
+  - command: "which rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync ; }"
+    timeout_sec: 300
+  - command: "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    timeout_sec: 300
+  - command: "mkdir -p {remote_repo}"
+    timeout_sec: 30
+
+staging:
+  - label: source
+    source: "{project_root}/"
+    destination: "{remote_repo}/"
+    excludes_default: true                     # v0.4 — hygiene preset (.git, .venv, caches)
+    excludes_extra: ["evals/", "artifacts/", "tests/", "docs/"]   # v0.4 — consumer-specific
+
+run:
+  script_path: "{remote_repo}/run-{backbone}-s{seed}.sh"   # rendered (v0.3.3)
+  log_path: "{remote_repo}/run-{backbone}-s{seed}.log"
+  success_marker: "[canonical-{backbone}-s{seed}] DONE"
+  body: |
+    set -euo pipefail
+    cd {remote_repo}
+    export PATH="$HOME/.local/bin:$PATH"
+
+    # uv sync respects the pinned python version (auto-injected at preflight[0])
+    uv sync --extra dev
+
+    # Predictions-only-on-GPU pattern: emit ONLY the per-row parquet;
+    # metrics / bootstrap CIs / paired tests run locally after pull.
+    # See docs/recipes/predictions-only-eval.md.
+    uv run python -m my_pkg.predict \
+      --backbone {backbone} \
+      --seed {seed} \
+      --out evals/canonical_{backbone}/seed{seed}/predictions_full.parquet
+
+    echo "[canonical-{backbone}-s{seed}] DONE"
+
+artifacts:
+  - label: predictions
+    remote_path: "{remote_repo}/evals/canonical_{backbone}/seed{seed}/"
+    local_path: "{project_root}/evals/canonical_{backbone}/seed{seed}/"
+    required: true
+
+stop:
+  on_success: true
+  on_failure: true

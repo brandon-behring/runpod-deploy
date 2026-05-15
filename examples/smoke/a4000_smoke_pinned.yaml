@@ -1,0 +1,86 @@
+schema_version: 2
+
+# Minimal v0.5 smoke example. Drop-in upgrade of a4000_smoke.yaml that
+# adds `pod.python_version` + `staging.excludes_default` to demonstrate
+# the v0.4/v0.5 fields with no other behavior change.
+#
+# Run with:
+#   runpod-deploy run --config examples/smoke/a4000_smoke_pinned.yaml --offline-dry-run
+#
+# Live cost: ~$0.05–0.20 (RTX A4000, ~3 min).
+
+name: a4000-smoke-pinned
+run_id_prefix: smoke-pinned
+state_file: ~/.runpod-smoke-pinned-current
+
+local:
+  project_root: .
+  required_paths:
+    - payload/hello.txt
+
+variables:
+  smoke_dir: /workspace/{run_id}
+
+pod:
+  image: runpod/pytorch:2.4.0-py3.13-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [EU-RO-1]
+  gpu_order:
+    - NVIDIA RTX A4000
+    - NVIDIA RTX A4500
+    - NVIDIA RTX 4000 Ada Generation
+    - NVIDIA RTX 2000 Ada Generation
+  cloud_type: SECURE
+  python_version: "3.13.5"        # v0.5 — auto-injects uv install+pin at preflight[0]
+
+storage:
+  mode: network_volume
+  volume_name: pid-workspace-100gb
+  volume_mount: /workspace
+
+ssh:
+  key_path: ~/.ssh/id_ed25519
+
+budget:
+  cost_cap_usd: 0.50
+  assumed_hourly_rate_usd: 1.65
+  poll_interval_sec: 30
+
+setup:
+  - command: "which rsync >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rsync ; }"
+    timeout_sec: 300
+  - command: "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    timeout_sec: 300
+  - command: "mkdir -p {smoke_dir}"
+    timeout_sec: 30
+
+staging:
+  - label: payload
+    source: "{project_root}/payload/"
+    destination: "{smoke_dir}/payload/"
+    excludes_default: true        # v0.4 — adds .git/.venv/caches preset
+    # No excludes_extra needed; payload/ has no project-specific dirs to skip.
+
+run:
+  script_path: /workspace/smoke-pinned-current.sh
+  log_path: /workspace/smoke-pinned-current.log
+  success_marker: "[smoke-pinned] DONE"
+  body: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export PATH="$HOME/.local/bin:$PATH"
+    echo "[smoke-pinned] START $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "[smoke-pinned] python_version: $(uv python list --only-installed | grep '\*' | head -1)"
+    nvidia-smi > {smoke_dir}/gpu_info.txt
+    cat {smoke_dir}/payload/hello.txt >> {smoke_dir}/gpu_info.txt
+    echo "[smoke-pinned] DONE $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+artifacts:
+  - label: gpu-info
+    remote_path: "{smoke_dir}/gpu_info.txt"
+    local_path: "{run_dir}"
+    required: true
+    delete: false
+
+stop:
+  on_success: true
+  on_failure: true
