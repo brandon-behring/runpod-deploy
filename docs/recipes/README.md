@@ -44,3 +44,19 @@ domain logic.
 - [`reproducibility.md`](reproducibility.md) — `pod.python_version`
   YAML field + `uv python install/pin` auto-injection to lock the
   CPython interpreter version across sweep runs.
+
+## By use case
+
+When you know what you're trying to accomplish, this table maps the
+goal to the recipes worth reading. Recipes compose — most non-trivial
+workflows pull from 3–4 of these.
+
+| Use case | Recipes |
+|---|---|
+| **Hyperparameter sweep over seeds / backbones** | [`multi-config-sweep.md`](multi-config-sweep.md) + [`predictions-only-eval.md`](predictions-only-eval.md) + [`reproducibility.md`](reproducibility.md) + [`cost-reconciliation.md`](cost-reconciliation.md) |
+| **Paper-grade canonical eval** | [`predictions-only-eval.md`](predictions-only-eval.md) + [`reproducibility.md`](reproducibility.md) + [`embed-deploy-metadata.md`](embed-deploy-metadata.md) |
+| **Save money on big sweeps** | [`local-preflight-then-run.md`](local-preflight-then-run.md) + [`predictions-only-eval.md`](predictions-only-eval.md) + [`cost-reconciliation.md`](cost-reconciliation.md) |
+| **Portability across GPU classes** | [`flash-attention-fallback.md`](flash-attention-fallback.md) + [`reproducibility.md`](reproducibility.md) |
+| **Post-mortem a failed sweep** | [`cost-reconciliation.md`](cost-reconciliation.md) + [`local-postprocess-after-run.md`](local-postprocess-after-run.md) + [`troubleshooting.md`](../troubleshooting.md) (Forensic recovery) |
+| **Stitch deploy provenance into your own evals manifest** | [`embed-deploy-metadata.md`](embed-deploy-metadata.md) + [`local-postprocess-after-run.md`](local-postprocess-after-run.md) |
+| **First-time consumer setup** | [`local-preflight-then-run.md`](local-preflight-then-run.md) + the parent [`quickstart.md`](../quickstart.md) |

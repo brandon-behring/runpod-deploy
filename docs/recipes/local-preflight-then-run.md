@@ -45,3 +45,14 @@ the YAML before any subprocess fires.
 Don't push CPU-only steps onto the pod just because they're "part of
 the run." Setup (`apt-get install rsync`, `uv sync`, model warmup) and
 dataset prep run faster on your local box and don't need GPU minutes.
+
+## See also
+
+- [`local-postprocess-after-run.md`](local-postprocess-after-run.md) —
+  the sibling pattern for post-run CPU steps.
+- [`multi-config-sweep.md`](multi-config-sweep.md) — the sweep
+  driver's `make audit` invocation is the canonical sweep-level
+  preflight call.
+- [`embed-deploy-metadata.md`](embed-deploy-metadata.md) — pair
+  the local preflight with `capture-env` to snapshot the
+  reproducibility tripod fields once per sweep.

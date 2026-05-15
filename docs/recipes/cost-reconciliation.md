@@ -76,3 +76,16 @@ distinguishes:
 When a run shows `failed: true` and `pod_final_state: TERMINATED`,
 RunPod killed the pod mid-run — usually quota or capacity. Re-running
 on a different DC (multi-DC failover) avoids the same outcome next time.
+
+## See also
+
+- [`multi-config-sweep.md`](multi-config-sweep.md) — the typical
+  source of many manifests; pair `manifest-summary --root` after a
+  sweep completes.
+- [`embed-deploy-metadata.md`](embed-deploy-metadata.md) — the same
+  fields the manifest captures (`local_git_sha`, `payload_lockfile`)
+  are exposed via the `capture-env` subcommand if you need them in
+  your own evals manifest.
+- [`local-postprocess-after-run.md`](local-postprocess-after-run.md) —
+  walks `<run_dir>` for aggregation; cost reconciliation is one
+  flavor of post-processing.

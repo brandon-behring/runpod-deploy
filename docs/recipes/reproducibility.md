@@ -63,3 +63,19 @@ preflight step — before any user `preflight` commands or run-body
 execute. The operator pays ~30s of pod time to surface a fixable
 config issue, not a multi-minute mid-run failure with partial
 artifacts.
+
+## See also
+
+- [`predictions-only-eval.md`](predictions-only-eval.md) — the
+  canonical "paper-grade evidence" pattern; pair with this recipe
+  for full reproducibility (interpreter pin + per-row predictions +
+  git SHA + lockfile hash captured in the manifest).
+- [`embed-deploy-metadata.md`](embed-deploy-metadata.md) — the manifest
+  already captures `local_git_sha`, `local_git_dirty`, `payload_lockfile`,
+  and the pinned `python_version` flows through `ctx.run_id` /
+  `provider --name`. `capture-env` exposes the same fields if you
+  need them in your own evals manifest.
+- [`multi-config-sweep.md`](multi-config-sweep.md) — apply the same
+  `python_version` pin across every shard in a sweep; consumers
+  reading manifests across runs can assert all shards used the same
+  interpreter.

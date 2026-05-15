@@ -56,3 +56,18 @@ Each run dir also contains:
 
 Walk these in your own analysis script when you need to reconstruct
 *why* a run behaved a certain way.
+
+## See also
+
+- [`local-preflight-then-run.md`](local-preflight-then-run.md) —
+  the sibling pattern for pre-run audits; the same Makefile target
+  often wires both.
+- [`predictions-only-eval.md`](predictions-only-eval.md) — the
+  canonical case for pulling per-row outputs and doing all metrics
+  CPU-side.
+- [`cost-reconciliation.md`](cost-reconciliation.md) — reads
+  `runpod_deploy_pull_manifest.json` for cost/wall-time per run;
+  pair with the artifact analysis above.
+- For aggregate forensics across many runs:
+  `runpod-deploy events-query` and `manifest-summary --root` (see
+  [`troubleshooting.md`](../troubleshooting.md) "Forensic recovery").

@@ -6,6 +6,21 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`docs/recipes/*.md`** all gain a `## See also` section pointing
+  at related recipes. Each recipe was previously self-contained;
+  consumers now have explicit composition pointers (e.g.,
+  `multi-config-sweep` → `cost-reconciliation` + `predictions-only-eval`
+  + `reproducibility` + `embed-deploy-metadata`).
+- **`docs/recipes/README.md`** gains a "By use case" cross-cut table
+  mapping common workflows ("Hyperparameter sweep over seeds",
+  "Paper-grade canonical eval", "Save money on big sweeps",
+  "Portability across GPU classes", "Post-mortem a failed sweep",
+  "Stitch deploy provenance into your own evals manifest",
+  "First-time consumer setup") to the 2–4 recipes worth reading
+  together for that goal.
+
+### Added
+
 - **`MIGRATION.md`** expanded with a schema-versioning policy
   preamble (additive-vs-bump criteria) and a summary of every
   additive change since `schema_version: 2` (the v0.3.x runtime
