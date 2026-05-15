@@ -6,6 +6,44 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`examples/hello/`** — new "absolute minimum" example. Targets
+  first-time consumers right after `pip install runpod-deploy` who
+  want to verify the CLI works without registering an SSH key,
+  creating a RunPod account, or installing `runpodctl`. Contains a
+  20-line `hello.yaml` (smallest valid v2 schema) + a README with a
+  30-second walkthrough + a phase-by-phase table of what
+  `--offline-dry-run` exercises vs. mocks. Auto-validated by
+  `tests/test_config.py::test_examples_are_schema_valid`.
+- **`test-published-wheel` CI job** in `.github/workflows/test.yml`.
+  Queries `https://pypi.org/pypi/runpod-deploy/json` for the
+  latest-published version, installs from PyPI, smoke-imports the
+  public API, runs `runpod-deploy --help`, and exercises the new
+  `examples/hello/hello.yaml` via `validate` + `run --offline-dry-run`.
+  Hard-gates merges; catches "publish succeeded but the wheel is
+  broken" regressions. Targets the latest-published version (not the
+  in-development `pyproject.toml` version) because version-bump
+  commits introduce a version that's not on PyPI until AFTER the
+  release workflow runs on the tag push; the in-development surface
+  is covered by the existing `test-base-install` job via local source.
+
+### Changed
+
+- **`README.md` Quickstart**: now leads with `pip install runpod-deploy`
+  (the published path) instead of `uv pip install -e ".[dev]"` (the
+  editable-install path). Mentions the new `examples/hello/hello.yaml`
+  for first-time verification. The editable-install + pre-commit setup
+  flow moves to `CONTRIBUTING.md` (already there). New "Contributors:
+  see CONTRIBUTING.md" pointer added.
+- **`docs/quickstart.md`** §1: install step rewritten to lead with
+  `pip install runpod-deploy`. §4: now mentions the bundled
+  `examples/hello/hello.yaml` as the absolute-minimum walkthrough
+  alongside the existing `examples/smoke/a4000_smoke.yaml`.
+- **`examples/README.md`**: adds a "First-time, no RunPod account
+  needed" row pointing at the new `hello/` example. Marks `hello/`
+  as the first stop for new PyPI-installed consumers.
+
+### Added
+
 - **`pyproject.toml` `[project.urls]`**: adds Homepage, Source, Issues,
   Changelog, Documentation, Releases — all linking to the GitHub repo
   + relevant files. Renders in the PyPI sidebar and on

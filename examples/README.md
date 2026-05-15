@@ -11,6 +11,7 @@ starting config.
 
 | Use case | Start with |
 |---|---|
+| **First-time, no RunPod account needed** | [`hello/hello.yaml`](hello/hello.yaml) — absolute-minimum config; `--offline-dry-run` walks the full lifecycle with no external calls |
 | **First-time smoke test** (cheap, fast) | [`smoke/a4000_smoke.yaml`](smoke/a4000_smoke.yaml) — minimal v1-style config, network volume |
 | **First-time smoke test with v0.5 features** | [`smoke/a4000_smoke_pinned.yaml`](smoke/a4000_smoke_pinned.yaml) — same workload + `python_version` + `excludes_default` |
 | **Paper-grade canonical sweep** | [`v0_5_canonical/canonical_sweep_pinned.yaml`](v0_5_canonical/canonical_sweep_pinned.yaml) + [`v0_5_canonical/README.md`](v0_5_canonical/README.md) — every v0.4/v0.5 feature in one realistic config |
@@ -21,6 +22,7 @@ starting config.
 
 ## Per-directory contents
 
+- **`hello/`** — absolute-minimum example for `--offline-dry-run`; targets first-time PyPI-installed consumers who just want to verify the CLI is wired up.
 - **`smoke/`** — minimal end-to-end pipelines. RTX A4000 / A4500 / 2000-Ada, EU-RO-1, ~$0.05–0.20.
 - **`prompt-injection-v3/`** — full threshold-free study config; A100/H100, ephemeral storage.
 - **`prompt-injection-sdd/`** — headline/resume eval; network-volume storage.

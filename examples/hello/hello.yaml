@@ -1,0 +1,64 @@
+schema_version: 2
+
+# Absolute-minimum runpod-deploy config — intended for `--offline-dry-run`
+# verification by first-time consumers right after `pip install runpod-deploy`.
+# No SSH key registration, no RunPod account, no rsync setup required.
+#
+# Usage:
+#   runpod-deploy run --config examples/hello/hello.yaml --offline-dry-run
+#
+# What `--offline-dry-run` exercises (without making any external calls):
+#   - YAML schema validation (this file must parse cleanly)
+#   - Template-variable rendering (no variables here, but the layer runs)
+#   - GPU/DC selection (synthetic; no `runpodctl datacenter list` call)
+#   - `runpodctl pod create` argv shape (logged, not invoked)
+#   - SSH connection (skipped — dry-run sentinel pod)
+#   - rsync staging push (logged, not invoked)
+#   - Detached remote run (logged, not invoked)
+#   - Log monitoring (skipped)
+#   - Artifact pull (skipped — no run actually ran)
+#   - Pod stop (logged, not invoked)
+#   - Manifest write (skipped in dry-run)
+#
+# This is the simplest valid v2 schema. Real workflows add staging,
+# secrets, preflight commands, etc. — see examples/smoke/ for the
+# next step up, and examples/v0_5_canonical/ for a paper-grade config.
+
+name: hello
+run_id_prefix: hello
+state_file: ~/.runpod-hello-current
+
+# No required_paths — keeps the validation gate maximally permissive
+# for the dry-run smoke test. Real configs should declare required
+# files (e.g., pyproject.toml) that the validate step checks.
+local:
+  project_root: .
+
+pod:
+  image: runpod/pytorch:2.4.0-py3.13-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [EU-RO-1]
+  gpu_order:
+    - NVIDIA RTX A4000
+
+storage:
+  mode: ephemeral
+  volume_gb: 20
+
+# SSH key not actually loaded under --offline-dry-run; the path just
+# needs to be syntactically valid. Real runs would put the real key
+# here.
+ssh:
+  key_path: ~/.ssh/id_ed25519
+
+run:
+  script_path: /workspace/hello.sh
+  log_path: /workspace/hello.log
+  success_marker: "[hello] DONE"
+  body: |
+    set -euo pipefail
+    echo "[hello] hello from $(hostname) at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "[hello] DONE"
+
+stop:
+  on_success: true
+  on_failure: true
