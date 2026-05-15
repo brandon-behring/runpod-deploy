@@ -193,10 +193,19 @@ def _parse_rsync_pushes(raw: Any) -> tuple[RsyncPushSpec, ...]:
     if not isinstance(raw, Sequence) or isinstance(raw, str):
         raise TypeError("staging must be a list of rsync push mappings")
     out: list[RsyncPushSpec] = []
+    allowed = {
+        "label",
+        "source",
+        "destination",
+        "excludes",
+        "delete",
+        "excludes_default",
+        "excludes_extra",
+    }
     for i, item in enumerate(raw):
         item_label = f"staging[{i}]"
         mapping = _mapping(item, item_label)
-        _check_keys(mapping, item_label, {"label", "source", "destination", "excludes", "delete"})
+        _check_keys(mapping, item_label, allowed)
         out.append(
             RsyncPushSpec(
                 label=_as_str(mapping.get("label"), f"{item_label}.label"),
@@ -204,6 +213,14 @@ def _parse_rsync_pushes(raw: Any) -> tuple[RsyncPushSpec, ...]:
                 destination=_as_str(mapping.get("destination"), f"{item_label}.destination"),
                 excludes=_tuple_str(mapping.get("excludes", ()), f"{item_label}.excludes"),
                 delete=_as_bool(mapping.get("delete", True), f"{item_label}.delete"),
+                excludes_default=_as_bool(
+                    mapping.get("excludes_default", False),
+                    f"{item_label}.excludes_default",
+                ),
+                excludes_extra=_tuple_str(
+                    mapping.get("excludes_extra", ()),
+                    f"{item_label}.excludes_extra",
+                ),
             )
         )
     return tuple(out)

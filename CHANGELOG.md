@@ -4,6 +4,28 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`staging[*].excludes_default` and `staging[*].excludes_extra`** —
+  two new optional YAML keys on each rsync-push entry. Set
+  `excludes_default: true` to prepend the hygiene preset
+  (`DEFAULT_STAGING_EXCLUDES`: `.git/`, `.venv/`, `.pytest_cache/`,
+  `.ruff_cache/`, `.mypy_cache/`, `**/__pycache__/`, `**/*.pyc`) to
+  the rsync `--exclude` list. `excludes_extra` is appended after for
+  project-specific add-ons (`evals/`, `artifacts/`, `data/`, ...).
+  Effective list = defaults (if opted in) + `excludes` + `excludes_extra`.
+  Existing YAMLs are unaffected: `excludes_default` defaults to false
+  and `excludes_extra` defaults to empty, so the only behavior change
+  for pre-existing configs is the addition of `excludes_extra` as a
+  recognized key — no schema-version bump required since the field
+  is additive and optional. New `RsyncPushSpec.effective_excludes`
+  property centralizes the merge logic; `orchestrator._push_workspace`
+  uses it. 6 new tests in `tests/test_config.py` cover back-compat,
+  defaults-only, defaults+explicit+extras (documented merge order),
+  extras-without-defaults, unknown-key strictness, and the contents
+  of `DEFAULT_STAGING_EXCLUDES` itself (hygiene-only contract). Doc
+  added to `docs/config-reference.md`. Closes #25.
+
 ### Fixed
 
 - **`name` and `run_id_prefix` top-level YAML fields now get

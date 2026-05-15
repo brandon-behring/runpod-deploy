@@ -42,6 +42,18 @@ DEFAULT_FAILURE_MARKERS = (
     "No space left on device",
     "Killed",
 )
+# Hygiene-only set, applied to `staging[*]` when `excludes_default: true`.
+# Project-specific exclusions (artifacts/, evals/, IDE files) stay in the
+# consumer's `excludes_extra` list.
+DEFAULT_STAGING_EXCLUDES: tuple[str, ...] = (
+    ".git/",
+    ".venv/",
+    ".pytest_cache/",
+    ".ruff_cache/",
+    ".mypy_cache/",
+    "**/__pycache__/",
+    "**/*.pyc",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,13 +186,21 @@ class CommandSpec:
 
 @dataclass(frozen=True, slots=True)
 class RsyncPushSpec:
-    """One local-to-remote rsync push."""
+    """One local-to-remote rsync push.
+
+    Effective exclude patterns are ``DEFAULT_STAGING_EXCLUDES`` (when
+    ``excludes_default`` is true) + ``excludes`` + ``excludes_extra``,
+    in that order. Existing YAMLs that set only ``excludes`` are
+    unaffected (``excludes_default`` defaults to false).
+    """
 
     label: str
     source: str
     destination: str
     excludes: tuple[str, ...] = ()
     delete: bool = True
+    excludes_default: bool = False
+    excludes_extra: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.label:
@@ -189,6 +209,13 @@ class RsyncPushSpec:
             raise ValueError(f"staging.push[{self.label!r}].source must be non-empty")
         if not self.destination:
             raise ValueError(f"staging.push[{self.label!r}].destination must be non-empty")
+
+    @property
+    def effective_excludes(self) -> tuple[str, ...]:
+        """Merged exclude list: defaults (if opted in) + explicit + extras."""
+        if self.excludes_default:
+            return DEFAULT_STAGING_EXCLUDES + self.excludes + self.excludes_extra
+        return self.excludes + self.excludes_extra
 
 
 @dataclass(frozen=True, slots=True)

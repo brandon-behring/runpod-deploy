@@ -69,6 +69,40 @@ preflight:
 
 `with_env: true` prepends `remote_env.source_files` and `remote_env.exports`.
 
+## Staging (rsync push)
+
+`staging` is a list of local-to-remote rsync transfers:
+
+```yaml
+staging:
+  - label: source
+    source: "{project_root}/"
+    destination: "{remote_repo}/"
+    excludes_default: true              # opt in to the hygiene preset
+    excludes_extra: ["evals/", "artifacts/"]
+    delete: true
+```
+
+Per-entry fields:
+
+- `label` (required)
+- `source` (required) — local path; template variables rendered
+- `destination` (required) — remote path; template variables rendered
+- `excludes` (optional) — explicit list of rsync `--exclude` patterns
+- `excludes_default` (optional, default `false`) — when `true`, prepend
+  the hygiene preset (`.git/`, `.venv/`, `**/__pycache__/`, `**/*.pyc`,
+  `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`). Saves repeating
+  these across configs that share repo conventions.
+- `excludes_extra` (optional) — additional patterns appended after
+  `excludes_default` + `excludes`. Useful for project-specific add-ons
+  like `evals/`, `artifacts/`, `data/`.
+- `delete` (optional, default `true`)
+
+The effective `--exclude` list passed to rsync is the concatenation:
+`DEFAULT_STAGING_EXCLUDES` (if `excludes_default`) + `excludes` +
+`excludes_extra`, in that order. Existing configs that set only
+`excludes` are unaffected.
+
 ## Artifacts
 
 Artifacts are pulled after a successful run, and best-effort after failure:
