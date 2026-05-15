@@ -6,6 +6,33 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`.github/PULL_REQUEST_TEMPLATE.md`** — auto-surfaced on every PR.
+  Sections for Summary / Testing checklist / Risk level / Documentation
+  updates / Linked issues. The Testing checklist includes a "golden
+  files reviewed (`tests/fixtures/golden/*.txt`) — only intentional
+  changes" line so reviewers don't miss UX-contract drift.
+- **`.github/ISSUE_TEMPLATE/`** — three forms: `bug_report.yml`,
+  `feature_request.yml`, `config.yml`. The bug form asks for the
+  failing lifecycle phase (mapped to `docs/lifecycle.md` §1–8) so
+  triage can route quickly. The feature form has an SRP-boundary
+  checkbox referencing `docs/extending.md` §3 so out-of-scope
+  proposals self-flag at submission. The config router disables
+  blank issues + links to `SECURITY.md`, `docs/troubleshooting.md`,
+  and `docs/recipes/README.md`.
+- **`scripts/audit_raises_sections.py`** + `make audit-docstrings` —
+  AST-based audit that walks `src/runpod_deploy/`, finds every
+  function with a `Raises:` docstring section, and compares the
+  documented exception types against actual `raise X(...)` sites
+  in the function body. Reports stale entries (documented but
+  never raised) and undeclared entries (raised but not in
+  `Raises:`). Currently green: 13 files audited, all matches.
+  Catches drift the moment someone adds a `Raises:` section in
+  a future PR.
+- **Pre-commit `check-added-large-files`** with a 500KB ceiling.
+  Catches accidental commits of model weights, datasets, build
+  artifacts. Bumpable via `--maxkb=N` if a legitimate large
+  fixture is needed.
+
 - **`.github/dependabot.yml`** — weekly grouped dependency updates
   for pip + github-actions ecosystems. Minor + patch updates batch
   into one PR per ecosystem (review-noise control); majors land

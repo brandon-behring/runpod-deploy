@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-unit test-smoke type coverage ci build clean
+.PHONY: help install lint format test test-unit test-smoke type coverage ci build audit-docstrings clean
 
 PYTHON := .venv/bin/python
 VENV := .venv
@@ -15,6 +15,7 @@ help:
 	@echo "  coverage    pytest with coverage report"
 	@echo "  ci          lint + test + coverage"
 	@echo "  build       sdist + wheel (matches GitHub release workflow)"
+	@echo "  audit-docstrings  Check Raises: sections match actual raise sites"
 	@echo "  clean       remove caches and build artifacts"
 
 install:
@@ -50,6 +51,9 @@ ci: lint test coverage
 
 build:
 	$(PYTHON) -m build
+
+audit-docstrings:
+	$(PYTHON) scripts/audit_raises_sections.py
 
 clean:
 	rm -rf build dist *.egg-info

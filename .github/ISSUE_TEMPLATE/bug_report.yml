@@ -1,0 +1,96 @@
+name: Bug report
+description: Report a reproducible failure in `runpod-deploy`.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: try `runpod-deploy validate --config <yaml> --all` and
+        check [`docs/troubleshooting.md`](../blob/main/docs/troubleshooting.md)
+        for the symptom. For security-relevant issues, follow [`SECURITY.md`](../blob/main/SECURITY.md)
+        instead of filing here.
+
+  - type: input
+    id: version
+    attributes:
+      label: runpod-deploy version
+      description: Output of `runpod-deploy --version` or `pip show runpod-deploy | grep Version`.
+      placeholder: "0.7.2"
+    validations:
+      required: true
+
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.13.5"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: OS / platform
+      placeholder: "Linux 7.0.0-15-generic, macOS 14.5, ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the failure mode. What you ran, what you expected, what you got.
+      placeholder: |
+        Running `runpod-deploy run --config configs/foo.yaml --offline-dry-run`
+        raised `RuntimeError: ...` at provider.py:285. Expected the
+        offline-dry-run to walk the lifecycle without raising.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Minimal config + command. If you can paste a redacted YAML, please do — it's the fastest path to a fix.
+      placeholder: |
+        ```yaml
+        schema_version: 2
+        name: bug-repro
+        ...
+        ```
+        Then: `runpod-deploy run --config bug-repro.yaml --offline-dry-run`
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Full traceback / log output
+      description: Run with `--verbose` if possible. Redact any tokens / hostnames.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Which lifecycle phase?
+      description: See [`docs/lifecycle.md`](../blob/main/docs/lifecycle.md) if you're not sure.
+      options:
+        - "1. Validate"
+        - "2. Provision (GPU/DC selection + pod create)"
+        - "3. SSH wait"
+        - "4. Setup commands"
+        - "5a. Secrets staging"
+        - "5b. Workspace stage (rsync push)"
+        - "5c. Preflight commands"
+        - "5d. Launch remote job"
+        - "5e. Monitor remote log"
+        - "6. Artifact pull"
+        - "7. Stop pod"
+        - "8. Manifest write"
+        - "Other / not sure"
+    validations:
+      required: true

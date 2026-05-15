@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/brandon-behring/runpod-deploy/blob/main/SECURITY.md
+    about: Please follow SECURITY.md instead of filing a public issue.
+
+  - name: Troubleshooting documentation
+    url: https://github.com/brandon-behring/runpod-deploy/blob/main/docs/troubleshooting.md
+    about: Common failure modes (provisioning, staging, run, sweep-driver) with symptom → diagnosis → fix.
+
+  - name: Recipes — composition patterns
+    url: https://github.com/brandon-behring/runpod-deploy/blob/main/docs/recipes/README.md
+    about: Multi-config sweeps, cost reconciliation, predictions-only-eval, reproducibility, and more.

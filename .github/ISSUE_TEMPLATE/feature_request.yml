@@ -1,0 +1,78 @@
+name: Feature request
+description: Propose a new YAML field, CLI flag, recipe, or behavior.
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check [`docs/extending.md`](../blob/main/docs/extending.md)
+        §3 ("The SRP boundary") to make sure the feature fits inside
+        `runpod-deploy`'s scope (pod-lifecycle primitives only — not
+        workflow orchestration or consumer-domain logic).
+
+  - type: textarea
+    id: use_case
+    attributes:
+      label: Use case
+      description: What are you trying to accomplish? What's the consumer-side workflow that prompted this?
+      placeholder: |
+        We're running multi-shard sweeps across N seeds × M backbones,
+        and want to ... but currently we have to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed feature
+      description: |
+        Sketch the YAML / CLI / library surface change. Concrete examples beat
+        abstract descriptions.
+      placeholder: |
+        Add `staging[].mirror: bool = false` field. When true, rsync uses
+        `--delete-after` instead of `--delete` so partial transfers don't
+        leave the pod in a half-staged state.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope category
+      description: |
+        Per `docs/extending.md` §3, every change is one of these. If it doesn't
+        fit, that's a sign the feature might be out-of-scope.
+      options:
+        - "YAML schema field (additive optional)"
+        - "YAML schema field (breaking change)"
+        - "CLI subcommand or flag"
+        - "Recipe (composition pattern doc)"
+        - "Forensic tool (manifest/events query)"
+        - "Reproducibility / metadata capture"
+        - "Other / not sure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing workarounds, related recipes, or different shapes of the feature you ruled out.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: srp_check
+    attributes:
+      label: SRP boundary check
+      description: |
+        Confirm this feature fits the single-responsibility scope (per
+        [`docs/extending.md`](../blob/main/docs/extending.md) §3).
+      options:
+        - label: This is metadata about the deploy (pod / GPU / cost / telemetry / manifest), NOT consumer-domain logic.
+          required: true
+        - label: This won't run consumer Python or bash on the local machine.
+          required: true
+        - label: This isn't multi-process workflow orchestration (sweep drivers belong in bash/Make/Python in the consumer repo).
+          required: true
