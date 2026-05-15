@@ -5,6 +5,17 @@ unknown fields are errors at parse time. See
 [`MIGRATION.md`](../MIGRATION.md) for the schema-versioning policy
 and v1 → v2 migration history.
 
+## `runpod-deploy run` invocation modes
+
+| Mode | What runs | Use case |
+|---|---|---|
+| (default) | Full lifecycle: `runpodctl pod create`, SSH wait, rsync push, remote commands, artifact pull, `runpodctl pod stop`. Real money. | Production runs. |
+| `--dry-run` | Read-only externals (`runpodctl datacenter list`, GraphQL pricing if `--max-gpu-price`) **+** all side-effecting commands are mocked + logged. | "Will my config find a GPU in stock right now?" |
+| `--offline-dry-run` | **No external calls at all**; synthetic GPU/DC selection + mocked side-effecting commands. Implies `--dry-run`. | CI tests, offline config iteration, validation against the lifecycle without a RunPod account. |
+
+For the per-phase breakdown of what runs in each mode, see
+[`lifecycle.md`](lifecycle.md).
+
 ## Annotated minimal config
 
 A working v2 config with every required section and the most common

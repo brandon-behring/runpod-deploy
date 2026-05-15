@@ -287,3 +287,20 @@ failure flow:
 
 For deeper failure-mode debugging see
 [`troubleshooting.md`](troubleshooting.md).
+
+---
+
+## `--dry-run` vs `--offline-dry-run`
+
+Both flags walk the lifecycle without provisioning, but they differ
+in whether external read-only queries are made:
+
+| Flag | External calls? | Use case |
+|---|---|---|
+| `--offline-dry-run` | **None** — no `runpodctl`, no SSH, no rsync. GPU/DC selection uses synthetic sentinels. | CI tests, fast config iteration, validation when you're offline or don't have a RunPod account |
+| `--dry-run` | **Read-only only** — `runpodctl datacenter list` is queried so live GPU stock info is reflected; `runpod-deploy gpu-prices` is queried if `--max-gpu-price` is set. Pod create / SSH / rsync are mocked. | "Will this config actually find a GPU in stock right now?" without provisioning |
+
+In code: `--offline-dry-run` implies `dry_run=True` in `run_job`,
+and additionally passes `offline=True` to
+`_resolve_gpu_id_and_dc` and `_resolve_volume_id`. The CLI gates the
+external calls via that `offline` flag.
