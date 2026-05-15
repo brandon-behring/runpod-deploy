@@ -4,7 +4,23 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
-## [0.3.3] - 2026-05-14 — template rendering for run.* path/marker fields
+### Fixed
+
+- **`docs/recipes/multi-config-sweep.md`** rewritten with correct
+  bounded-concurrency bash pattern. Three pitfalls now explicitly
+  called out and addressed in the example: (1) `set -o pipefail` is
+  mandatory when piping driver output through `tee` (without it, a
+  driver that dies mid-script returns `tee`'s success code and looks
+  successful); (2) `wait -n` inside the semaphore loop must be wrapped
+  `2>/dev/null || true` to keep `set -e` from killing the driver on the
+  first shard failure; (3) `ls -td artifacts/runpod/* | head -1` races
+  against in-flight sibling shards at `MAX_PARALLEL > 1` and silently
+  misclassifies failure modes — capture the run-dir via per-attempt
+  `tee` of `runpod-deploy run --print-run-dir` (added in this release)
+  instead. Closes #14 (doc portion), #15 (doc portion), #19. Surfaced
+  by `prompt-injection-v5` v0.4 sweep work.
+
+
 
 ### Fixed
 
