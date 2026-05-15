@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-unit test-smoke type coverage ci clean
+.PHONY: help install lint format test test-unit test-smoke type coverage ci build clean
 
 PYTHON := .venv/bin/python
 VENV := .venv
@@ -14,6 +14,7 @@ help:
 	@echo "  type        mypy strict on src/"
 	@echo "  coverage    pytest with coverage report"
 	@echo "  ci          lint + test + coverage"
+	@echo "  build       sdist + wheel (matches GitHub release workflow)"
 	@echo "  clean       remove caches and build artifacts"
 
 install:
@@ -46,6 +47,9 @@ coverage:
 	$(PYTHON) -m pytest --cov=runpod_deploy --cov-report=term-missing
 
 ci: lint test coverage
+
+build:
+	$(PYTHON) -m build
 
 clean:
 	rm -rf build dist *.egg-info
