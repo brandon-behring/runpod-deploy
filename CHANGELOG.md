@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-15 — post-audit cleanup + PyPI publishing workflow
+
 ### Added
 
 - **`.github/workflows/release.yml`** — new tag-triggered release
