@@ -5,10 +5,12 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import shlex
 import sys
 from collections.abc import Sequence
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -528,6 +530,98 @@ def _format_offset(seconds: float) -> str:
     return f"[{sign}{m}:{s:02d}]"
 
 
+_DURATION_RE = re.compile(r"^(\d+)([smhd])$")
+_DURATION_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_duration(raw: str) -> int:
+    """Parse a short duration string (`30s`, `5m`, `1h`, `7d`) into seconds.
+
+    Format: an integer followed by a single unit suffix `s|m|h|d`. No
+    decimals, no compound forms (`1h30m` is rejected). Returns the value
+    in whole seconds. Used by --since on the events-query subcommand.
+    """
+    match = _DURATION_RE.match(raw)
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            f"--since must be N + unit (s|m|h|d), e.g. '30m' or '1h' or '7d'; got {raw!r}"
+        )
+    n, unit = match.group(1), match.group(2)
+    return int(n) * _DURATION_UNITS[unit]
+
+
+def _parse_filter_arg(raw: str) -> tuple[str, str]:
+    """Parse one `--filter KEY=VALUE` arg into a (key, value) tuple.
+
+    KEY must be a valid Python identifier (so filters target known
+    event-row keys: `event`, `gpu_id`, `datacenter_id`, `label`, ...).
+    VALUE is the literal exact-match string the event field must equal.
+    """
+    if "=" not in raw:
+        raise argparse.ArgumentTypeError(f"--filter expects KEY=VALUE form, got {raw!r}")
+    key, _, value = raw.partition("=")
+    if not key.isidentifier():
+        raise argparse.ArgumentTypeError(f"--filter key must be a valid identifier, got {key!r}")
+    return key, value
+
+
+def _events_match_filter(event: dict[str, Any], filters: list[tuple[str, str]]) -> bool:
+    """All filters must match (AND-semantics) on exact-string comparison."""
+    for key, expected in filters:
+        actual = event.get(key)
+        if actual is None or str(actual) != expected:
+            return False
+    return True
+
+
+def _cmd_events_query(args: argparse.Namespace) -> int:
+    """Aggregate events.jsonl across run dirs under --root with optional filtering."""
+    root = Path(args.root)
+    if not root.is_dir():
+        raise FileNotFoundError(f"--root directory not found: {root}")
+    since_cutoff_utc: datetime | None = None
+    if args.since is not None:
+        since_seconds = _parse_duration(args.since)
+        since_cutoff_utc = datetime.now(UTC) - timedelta(seconds=since_seconds)
+    filters: list[tuple[str, str]] = args.filter or []
+    rows: list[dict[str, Any]] = []
+    for events_path in sorted(root.rglob(forensics.EVENTS_FILENAME)):
+        run_dir_name = events_path.parent.name
+        for entry in forensics.load_events(events_path):
+            ts_raw = entry.get("ts_utc")
+            if since_cutoff_utc is not None:
+                if not isinstance(ts_raw, str):
+                    continue
+                try:
+                    ts = datetime.fromisoformat(ts_raw)
+                except ValueError:
+                    continue
+                if ts < since_cutoff_utc:
+                    continue
+            if filters and not _events_match_filter(entry, filters):
+                continue
+            row = dict(entry)
+            row["run_dir"] = run_dir_name
+            rows.append(row)
+    if args.json:
+        for row in rows:
+            sys.stdout.write(json.dumps(row) + "\n")
+        return 0
+    if not rows:
+        logger.info(f"no matching events under {root}")
+        return 0
+    for row in rows:
+        ts_str = str(row.get("ts_utc") or "")
+        row_run_dir = str(row.get("run_dir") or "")
+        event_name = str(row.get("event") or "?")
+        skip_keys = {"ts_utc", "run_dir", "event"}
+        fields = " ".join(
+            f"{k}={_render_event_value(v)}" for k, v in row.items() if k not in skip_keys
+        )
+        sys.stdout.write(f"[{ts_str}] {row_run_dir} {event_name} {fields}".rstrip() + "\n")
+    return 0
+
+
 def _render_event_value(v: object) -> str:
     if isinstance(v, str) and (" " in v or '"' in v):
         return f'"{v}"'
@@ -867,6 +961,46 @@ def main(argv: Sequence[str] | None = None) -> int:
         "run_dir", type=Path, help="A run directory containing events.jsonl."
     )
 
+    events_query_parser = sub.add_parser(
+        "events-query",
+        parents=[verbosity],
+        help="Aggregate events.jsonl across run dirs under --root, "
+        "optionally filtered by --filter KEY=VALUE and --since DURATION.",
+    )
+    events_query_parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path("artifacts/runpod"),
+        metavar="DIR",
+        help="Walk DIR recursively for `events.jsonl` files. "
+        "Default: artifacts/runpod (the v0.3.0 per-run artifact layout).",
+    )
+    events_query_parser.add_argument(
+        "--filter",
+        type=_parse_filter_arg,
+        action="append",
+        default=None,
+        metavar="KEY=VALUE",
+        help="Keep only events whose KEY field equals VALUE (exact-string "
+        "match). Repeatable; multiple --filter flags AND together. "
+        "Typical: --filter event=pod_killed_unexpected --filter datacenter_id=EU-RO-1.",
+    )
+    events_query_parser.add_argument(
+        "--since",
+        type=str,
+        default=None,
+        metavar="DURATION",
+        help="Keep only events whose ts_utc is within DURATION of now "
+        "(short form, e.g. '1h', '30m', '7d'). Events with unparseable "
+        "ts_utc are dropped when --since is set.",
+    )
+    events_query_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output as JSONL (one row per event, with a `run_dir` field "
+        "added). Default output is a compact human-readable table.",
+    )
+
     capture_env_parser = sub.add_parser(
         "capture-env",
         parents=[verbosity],
@@ -918,6 +1052,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "ls-runs": _cmd_ls_runs,
         "compare-runs": _cmd_compare_runs,
         "events": _cmd_events,
+        "events-query": _cmd_events_query,
         "capture-env": _cmd_capture_env,
         "manifest-summary": _cmd_manifest_summary,
     }
