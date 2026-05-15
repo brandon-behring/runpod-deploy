@@ -22,14 +22,23 @@ starting config.
 
 ## Per-directory contents
 
-- **`hello/`** — absolute-minimum example for `--offline-dry-run`; targets first-time PyPI-installed consumers who just want to verify the CLI is wired up.
-- **`smoke/`** — minimal end-to-end pipelines. RTX A4000 / A4500 / 2000-Ada, EU-RO-1, ~$0.05–0.20.
-- **`prompt-injection-v3/`** — full threshold-free study config; A100/H100, ephemeral storage.
-- **`prompt-injection-sdd/`** — headline/resume eval; network-volume storage.
-- **`research-kb/`** — GPU-accelerated PDF embedding pipeline.
-- **`post_transformers/`** — post-transformers GPU benchmark workload.
-- **`v0_5_canonical/`** — realistic canonical-sweep config exercising every v0.4 + v0.5 feature (`python_version`, `excludes_default`/`excludes_extra`, rendered `name`/`run_id_prefix`, `--print-run-dir`). See its README for what each field does.
-- **`forensics/`** — shell scripts for common post-run queries (`runpod-deploy manifest-summary --root`, `runpod-deploy events-query --filter ...`).
+> Auto-generated from each example's `README.md` H1 + first paragraph.
+> Regenerate via `make examples-index` after editing an example's README
+> or adding a new example dir. The "By use case" table above stays
+> human-maintained.
+
+<!-- begin examples-index -->
+
+- **[`forensics/`](forensics/)** — _Forensic scripts_. Pre-built shell scripts for common post-run queries. Each is short enough to copy-paste-adapt for a consumer repo; they exist here as runnable references rather than as a library to vendor.
+- **[`hello/`](hello/)** — _Hello example_. The smallest valid runpod-deploy config. Intended for first-time consumers right after `pip install runpod-deploy` who want to verify the CLI works **without** registering an SSH key, creating a RunPod account, or installing `runpodctl`.
+- **[`post_transformers/`](post_transformers/)** — (no README.md; see the contained `*.yaml` for the config.)
+- **[`prompt-injection-sdd/`](prompt-injection-sdd/)** — (no README.md; see the contained `*.yaml` for the config.)
+- **[`prompt-injection-v3/`](prompt-injection-v3/)** — (no README.md; see the contained `*.yaml` for the config.)
+- **[`research-kb/`](research-kb/)** — (no README.md; see the contained `*.yaml` for the config.)
+- **[`smoke/`](smoke/)** — _smoke_. Minimal end-to-end deploy check. Provisions an RTX A4000/A4500/A100 (whichever is in stock) in `EU-RO-1`, mounts the existing `pid-workspace-100gb` network volume, rsyncs a one-line payload, runs `nvidia-smi`, pulls the output, and stops...
+- **[`v0_5_canonical/`](v0_5_canonical/)** — _v0.5 canonical sweep example_. `canonical_sweep_pinned.yaml` is a realistic sweep config exercising every v0.4 + v0.5 feature in one place. Copy-paste into your own repo as a starting point for a paper-grade canonical evaluation.
+
+<!-- end examples-index -->
 
 ## How to use an example
 

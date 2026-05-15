@@ -6,6 +6,17 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`scripts/regen_examples_index.py` + `make examples-index`** —
+  auto-generate the "Per-directory contents" section of
+  `examples/README.md` from each example's `README.md` H1 + first
+  paragraph. Marker-comment-bracketed (`<!-- begin examples-index -->`
+  / `<!-- end examples-index -->`) so the "By use case" table above
+  stays human-maintained. Idempotent. Mirrors the SkyPilot pattern.
+  Running on this baseline regenerated 8 example entries; 4 of them
+  flagged as missing their `README.md` (legacy `examples/` dirs that
+  predate the README-per-example convention). Future work: backfill
+  those READMEs so the auto-index has consistent descriptions.
+
 - **`argcomplete` shell completion** (opt-in via new `[completion]`
   extra). `pip install runpod-deploy[completion]` + a one-line `eval`
   in shell rc enables Bash/Zsh tab-completion of subcommands + flags.
