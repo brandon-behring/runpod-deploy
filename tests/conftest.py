@@ -120,3 +120,24 @@ def fake_popen(monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
         return instances
 
     yield install
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Add `--update-goldens` for `tests/test_cli_golden.py` to regenerate fixtures.
+
+    Usage:
+        pytest tests/test_cli_golden.py --update-goldens
+    """
+    parser.addoption(
+        "--update-goldens",
+        action="store_true",
+        default=False,
+        help="Regenerate the .txt golden fixtures rather than asserting against them. "
+        "Review the resulting `git diff` carefully before committing.",
+    )
+
+
+@pytest.fixture
+def update_goldens(request: pytest.FixtureRequest) -> bool:
+    """True when pytest was invoked with --update-goldens."""
+    return bool(request.config.getoption("--update-goldens"))

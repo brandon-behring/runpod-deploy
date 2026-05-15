@@ -1,0 +1,2 @@
+[2026-05-15T12:00:00+00:00] <TS> gpu_selected gpu_id=H100 datacenter_id=US-GA-2
+[2026-05-15T12:00:30+00:00] <TS> artifact_pull_completed label=results duration_sec=3.2

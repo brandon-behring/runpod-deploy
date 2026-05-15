@@ -1,0 +1,2 @@
+[+0:00] gpu_selected gpu_id=H100 datacenter_id=US-GA-2
+[+0:30] artifact_pull_completed label=results duration_sec=3.2

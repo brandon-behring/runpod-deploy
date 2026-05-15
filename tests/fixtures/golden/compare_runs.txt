@@ -1,0 +1,27 @@
+diff between two manifests:
+  a: <TMP>/a.json  (demo)
+  b: <TMP>/b.json  (demo)
+
+  schema_version                           v2 == v2
+  failed                                   False == False
+  job_name                                 demo == demo
+  gpu_id                                   NVIDIA H100 80GB HBM3  →  NVIDIA A100-SXM4-80GB
+  datacenter_id                            US-GA-2 == US-GA-2
+  gpu_price_per_hour_usd                   4.18 == 4.18
+  gpu_price_source                         pod_describe == pod_describe
+  wall_time_sec                            1842.4  →  2500.0
+  estimated_cost_usd                       2.14  →  3.50
+  pod_id                                   pod-abc == pod-abc
+  pod_final_state                          EXITED == EXITED
+  image                                    runpod/pytorch:2.4.0 == runpod/pytorch:2.4.0
+  storage_mode                             ephemeral == ephemeral
+  deploy_metadata.local_git_sha            abcd1234 == abcd1234
+  deploy_metadata.local_git_dirty          False == False
+  deploy_metadata.local_git_branch         — == —
+  deploy_metadata.payload_lockfile         uv.lock == uv.lock
+  deploy_metadata.payload_lockfile_sha256  — == —
+  deploy_metadata.remote_python_version    — == —
+  deploy_metadata.remote_uname             — == —
+  artifact[results].status                 success == success
+  artifact[results].bytes_transferred      1024 == 1024
+  artifact[results].duration_sec           3.20 == 3.20

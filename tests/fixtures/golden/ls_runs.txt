@@ -1,0 +1,3 @@
+timestamp         job   pod_id   gpu                    dc       wall_s  failed  est_$
+<TS>  demo  pod-abc  NVIDIA H100 80GB HBM3  US-GA-2  1842    N       $2.14
+<TS>  demo  pod-abc  NVIDIA H100 80GB HBM3  US-GA-2  1842    Y       $5.50
