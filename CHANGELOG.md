@@ -6,6 +6,21 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`runpod-deploy manifest-summary --root DIR`** mode. The
+  `manifest-summary` subcommand gains an optional `--root DIR` argument
+  that walks the directory recursively for every
+  `runpod_deploy_pull_manifest.json`, prints a per-run summary block
+  for each, and finishes with a `== TOTALS ==` footer (manifest count,
+  failure count, summed `wall_time_sec`, summed `estimated_cost_usd`).
+  The positional `manifest` arg becomes optional and is mutually
+  exclusive with `--root`. Composes with the v0.3.0 multi-shard sweep
+  output (`artifacts/runpod/<ts>/runpod_deploy_pull_manifest.json`) for
+  one-shot cost reconciliation across a sweep:
+  `runpod-deploy manifest-summary --root artifacts/runpod`. 6 new
+  tests in `tests/test_cli_manifest_summary.py` cover the aggregated
+  TOTALS output, the mutually-exclusive arg policy, the missing-dir
+  fail-fast, and the empty-dir info-log. Closes #21.
+
 - **`docs/recipes/predictions-only-eval.md`** — new recipe documenting
   the architectural pattern where the GPU pod emits ONLY
   `predictions_full.parquet` + adapters and all metrics / bootstrap CIs

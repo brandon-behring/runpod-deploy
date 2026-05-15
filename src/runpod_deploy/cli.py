@@ -544,11 +544,66 @@ def _cmd_capture_env(args: argparse.Namespace) -> int:
 
 
 def _cmd_manifest_summary(args: argparse.Namespace) -> int:
+    if args.root is not None and args.manifest is not None:
+        raise argparse.ArgumentTypeError(
+            "manifest-summary: provide exactly one of <manifest> or --root, not both"
+        )
+    if args.root is not None:
+        return _cmd_manifest_summary_root(Path(args.root))
+    if args.manifest is None:
+        raise argparse.ArgumentTypeError(
+            "manifest-summary: must provide either a manifest path or --root DIR"
+        )
     path = Path(args.manifest)
     if not path.exists():
         raise FileNotFoundError(f"manifest not found: {path}")
     payload = json.loads(path.read_text())
     sys.stdout.write(_format_manifest_summary(payload) + "\n")
+    return 0
+
+
+def _cmd_manifest_summary_root(root: Path) -> int:
+    """Walk `root` for every `runpod_deploy_pull_manifest.json` and print a summary block per run, plus a TOTALS footer."""
+    if not root.is_dir():
+        raise FileNotFoundError(f"--root directory not found: {root}")
+    manifests = sorted(root.rglob(forensics.MANIFEST_FILENAME))
+    if not manifests:
+        logger.info(f"no manifests found under {root}")
+        return 0
+    failed_count = 0
+    total_wall_time_sec = 0.0
+    total_estimated_cost_usd = 0.0
+    have_any_cost = False
+    have_any_wall = False
+    blocks: list[str] = []
+    for path in manifests:
+        try:
+            payload = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(f"[manifest-summary] failed to parse {path}: {exc}; skipping")
+            continue
+        if not isinstance(payload, dict):
+            logger.warning(f"[manifest-summary] {path}: not a JSON object; skipping")
+            continue
+        blocks.append(f"== {path} ==\n{_format_manifest_summary(payload)}")
+        if payload.get("failed"):
+            failed_count += 1
+        wall = payload.get("wall_time_sec")
+        if isinstance(wall, (int, float)):
+            total_wall_time_sec += float(wall)
+            have_any_wall = True
+        cost = payload.get("estimated_cost_usd")
+        if isinstance(cost, (int, float)):
+            total_estimated_cost_usd += float(cost)
+            have_any_cost = True
+    sys.stdout.write("\n\n".join(blocks) + "\n\n")
+    sys.stdout.write("== TOTALS ==\n")
+    sys.stdout.write(f"manifests:        {len(manifests)}\n")
+    sys.stdout.write(f"failed:           {failed_count}\n")
+    if have_any_wall:
+        sys.stdout.write(f"wall_time_sec:    {total_wall_time_sec:.1f}\n")
+    if have_any_cost:
+        sys.stdout.write(f"estimated_cost:   ${total_estimated_cost_usd:.2f}\n")
     return 0
 
 
@@ -827,10 +882,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     manifest_parser = sub.add_parser(
         "manifest-summary",
         parents=[verbosity],
-        help="Pretty-print a runpod_deploy_pull_manifest.json (v1 or v2).",
+        help="Pretty-print a runpod_deploy_pull_manifest.json (v1 or v2); "
+        "with --root, aggregate every manifest under DIR with a TOTALS footer.",
     )
     manifest_parser.add_argument(
-        "manifest", type=Path, help="Path to a runpod_deploy_pull_manifest.json file."
+        "manifest",
+        type=Path,
+        nargs="?",
+        default=None,
+        help="Path to a single runpod_deploy_pull_manifest.json file. "
+        "Mutually exclusive with --root.",
+    )
+    manifest_parser.add_argument(
+        "--root",
+        type=Path,
+        default=None,
+        metavar="DIR",
+        help="Walk DIR recursively for every runpod_deploy_pull_manifest.json "
+        "and print a per-run summary block plus a TOTALS footer "
+        "(manifest count, failure count, summed wall_time_sec, summed "
+        "estimated_cost_usd). Typical use: --root artifacts/runpod after a "
+        "multi-shard sweep. Mutually exclusive with the positional manifest arg.",
     )
 
     args = parser.parse_args(argv)
