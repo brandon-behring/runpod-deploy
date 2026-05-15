@@ -323,3 +323,41 @@ def test_default_staging_excludes_contents_are_hygiene_only(tmp_path: Path) -> N
         "**/__pycache__/",
         "**/*.pyc",
     )
+
+
+# ---- v0.7 PR-N gap fill (T8) ----
+
+
+@pytest.mark.unit
+def test_pod_python_version_rejects_template_literal_at_parse_time(tmp_path: Path) -> None:
+    """T8: validation of `pod.python_version` runs in __post_init__ (pre-render).
+
+    The regex `^3\\.\\d+(\\.\\d+)?$` is checked against the raw string
+    *as stored on the spec* — not after template-variable expansion.
+    So a YAML with `python_version: "{py_ver}"` is rejected at
+    parse time, even though `--var py_ver=3.13` would later render
+    to a valid value. This is intentional: template-driven
+    interpreter pinning conflates the "what version" decision with
+    the "what variable" abstraction; reject it upfront for clarity.
+    """
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+run_id_prefix: demo
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: [g1]
+  python_version: "{py_ver}"
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    with pytest.raises(ValueError, match="pod.python_version must match"):
+        load_job_spec(config)

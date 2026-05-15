@@ -293,3 +293,119 @@ stop:
     captured = capsys.readouterr()
     assert "RUN_DIR=" not in captured.out
     assert "RUN_DIR=" not in captured.err
+
+
+# ---- v0.7 PR-N gap fills (T1, T7) ----
+
+
+@pytest.mark.smoke
+def test_print_run_dir_survives_quiet_verbosity(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """T1: `--print-run-dir` line survives `--quiet`.
+
+    `--quiet` suppresses INFO logging but the RUN_DIR=<path> line uses
+    `sys.stdout.write` directly (not the logger). The line must remain
+    visible because driver scripts grep for it independent of the
+    logging mode of the orchestrator process.
+    """
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+state_file: ~/.runpod-demo-current
+local:
+  project_root: .
+  required_paths:
+    - pyproject.toml
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [US-MD-1]
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: ephemeral
+  volume_gb: 20
+ssh:
+  key_path: ~/.ssh/id_ed25519
+setup: []
+staging: []
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+artifacts: []
+stop:
+  on_success: true
+  on_failure: true
+""")
+    run_job(
+        load_job_spec(config),
+        config_path=config,
+        offline_dry_run=True,
+        print_run_dir=True,
+    )
+    captured = capsys.readouterr()
+    run_dir_lines = [line for line in captured.out.splitlines() if line.startswith("RUN_DIR=")]
+    assert len(run_dir_lines) == 1, (
+        f"--print-run-dir must emit exactly one RUN_DIR= line on stdout "
+        f"independent of logger verbosity, got {run_dir_lines!r}"
+    )
+
+
+@pytest.mark.smoke
+def test_python_version_with_empty_staging_falls_back_to_home(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """T7: `pod.python_version` set + no staging → pin target is `$HOME`.
+
+    When `spec.staging` is empty, `_build_python_pin_preflight` falls
+    back to `$HOME` as the pin-target directory. The auto-injected
+    preflight command must still emit `uv python install + pin` without
+    crashing on the empty-staging case.
+    """
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+state_file: ~/.runpod-demo-current
+local:
+  project_root: .
+  required_paths:
+    - pyproject.toml
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [US-MD-1]
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+  python_version: "3.13.5"
+storage:
+  mode: ephemeral
+  volume_gb: 20
+ssh:
+  key_path: ~/.ssh/id_ed25519
+setup: []
+staging: []
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+artifacts: []
+stop:
+  on_success: true
+  on_failure: true
+""")
+    run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
+    log = caplog.text
+    assert "uv python install 3.13.5" in log
+    assert "uv python pin 3.13.5" in log
+    # With no staging entries, the pin target falls back to $HOME.
+    assert "cd $HOME" in log

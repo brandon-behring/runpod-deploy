@@ -4,6 +4,33 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **8 named-gap regression tests** for edge cases not previously
+  exercised across the v0.4 + v0.5 surface:
+  - **T1**: `--print-run-dir` line emits on stdout even when `--quiet`
+    suppresses logger INFO (uses `sys.stdout.write` directly).
+  - **T2**: `provider._build_pod_create_argv` passes the *rendered*
+    `ctx.run_id` to `runpodctl pod create --name` — regression at the
+    use site for v0.4 PR-C. Without this test, a refactor at
+    provider.py:285 could silently un-wire the v0.4 fix.
+  - **T3**: `events-query --filter KEY=VALUE` matches numeric event
+    fields via `str()` coercion (locks the string-cast comparison
+    semantics).
+  - **T4**: `events-query` skips malformed lines in `events.jsonl`
+    with WARNING; well-formed rows in the same file still emit.
+  - **T5**: `events-query --since` drops events with missing or
+    unparseable `ts_utc` (rather than treating them as "always in
+    window").
+  - **T6**: `manifest-summary --root` skips manifests that fail to
+    parse with WARNING; well-formed manifests still appear in the
+    output and TOTALS reflects only parsed stats.
+  - **T7**: `pod.python_version` set + empty `staging` falls back to
+    `$HOME` as the pin-target directory without crashing.
+  - **T8**: `pod.python_version` validation runs in `__post_init__`
+    (pre-render); a YAML with `python_version: "{py_ver}"` is
+    rejected at parse time.
+
 ## [0.6.0] - 2026-05-15 — consumer-onboarding + reference depth
 
 ### Added
