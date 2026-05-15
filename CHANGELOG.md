@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-15 — CI hygiene: node24 actions + dependabot policy + test-isolation fix
+
 ### Changed
 
 - **GitHub Actions bumped off Node.js 20** (deadline: 2026-06-02).
