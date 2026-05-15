@@ -308,6 +308,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         datacenter_id_override=args.datacenter_id,
         max_gpu_price_usd=args.max_gpu_price,
         cli_variables=cli_variables if cli_variables else None,
+        print_run_dir=bool(args.print_run_dir),
     )
     return 0
 
@@ -700,6 +701,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="PATH",
         help="JSON object of {KEY: VALUE} template variables. "
         "Merged with --var (CLI --var wins on collision).",
+    )
+    run_parser.add_argument(
+        "--print-run-dir",
+        action="store_true",
+        help="Emit a 'RUN_DIR=<path>' line on stdout immediately after the "
+        "run-directory path is resolved. Intended for parallel-sweep "
+        "drivers that need a machine-parseable handle to this attempt's "
+        "run dir (avoids the 'ls -td' race documented in "
+        "docs/recipes/multi-config-sweep.md).",
     )
 
     stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
