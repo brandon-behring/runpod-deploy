@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-15 — sweep-recipe correctness + render parity
+
 ### Added
 
 - **`staging[*].excludes_default` and `staging[*].excludes_extra`** —
