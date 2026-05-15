@@ -33,7 +33,7 @@ headline-cloud:
 
 ## Pattern (Python)
 
-```python
+```python notest
 import json
 import subprocess
 

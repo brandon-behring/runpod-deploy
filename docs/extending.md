@@ -83,7 +83,7 @@ Public API surface (re-exported from `__init__.py`):
 
 ### Pattern: composing with a Python driver
 
-```python
+```python notest
 from runpod_deploy import load_job_spec, run_job
 
 spec = load_job_spec("configs/runpod/template.yaml")

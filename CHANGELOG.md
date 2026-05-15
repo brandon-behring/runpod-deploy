@@ -6,6 +6,21 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`pytest-markdown-docs` doctest gate** — fenced Python blocks in
+  `docs/`, `README.md`, and `examples/` now execute under `pytest
+  --markdown-docs`. New `make doctest` target + dedicated `doctest`
+  CI job in `.github/workflows/test.yml` (parallel to `test` /
+  `test-base-install` / `test-published-wheel` / `security`; hard-fail).
+  Illustrative blocks that reference unrunnable consumer-side imports
+  (`torch`, `transformers`) or use `...` placeholders are skipped via
+  the plugin's ` ```python notest ` syntax; 5 files patched
+  (`docs/extending.md`, three `docs/recipes/*.md`,
+  `docs/troubleshooting.md`). The single live doctest currently is the
+  JSON snippet in `docs/recipes/cost-reconciliation.md`. Guards against
+  doc drift: a copy-paste from any unmarked Python block must literally
+  execute.
+- New `[project.optional-dependencies].dev` entry:
+  `pytest-markdown-docs>=0.9`.
 - **`AGENTS.md`** — discoverability shim for non-Claude agents
   (Cursor, Codex, Aider, Copilot Workspace, etc.). Per the emerging
   agents.md convention: ~80-line redirect pointing at `CLAUDE.md` for

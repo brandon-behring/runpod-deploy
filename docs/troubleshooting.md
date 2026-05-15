@@ -285,7 +285,7 @@ GPUs that don't support it.
 **Fix**: wrap the model load with a try/except per
 [`recipes/flash-attention-fallback.md`](recipes/flash-attention-fallback.md):
 
-```python
+```python notest
 try:
     encoder = AutoModel.from_pretrained(
         model_id, attn_implementation="flash_attention_2", ...
