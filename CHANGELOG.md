@@ -6,6 +6,24 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`.github/workflows/release.yml`** — new tag-triggered release
+  workflow. On `git push origin v*`, builds the sdist + wheel via
+  `python -m build` (hatchling backend) and publishes to PyPI via
+  **Trusted Publishing** (OIDC; no API tokens in repo secrets).
+  Two-job structure: `build` produces and uploads the artifacts
+  (always succeeds), `publish-to-pypi` consumes them via
+  `pypa/gh-action-pypi-publish@release/v1` (fails gracefully with
+  a clear "trusted publisher not configured" error until the
+  PyPI-side setup is done).
+- **`docs/release.md`** — new release-process doc covering the
+  one-time PyPI Trusted Publishing setup (pending publisher
+  registration), cutting a release, failure modes, workflow
+  iteration patterns (TestPyPI, branch-test trigger), and the
+  "I accidentally pushed a tag" recovery flow.
+- **`Makefile`** gains a `build` target wrapping
+  `python -m build` so consumers can verify the release-workflow
+  build path locally without committing.
+
 - **`examples/README.md`** — new index for the `examples/` tree. Lists
   each example by use case + per-directory contents + the standard
   "how to use an example" recipe (copy → edit → validate → dry-run →
