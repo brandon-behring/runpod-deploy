@@ -4,6 +4,22 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tests/test_provider_subprocess.py` isolation**: this file's tests
+  depended on alphabetical test ordering to populate
+  `provider._supported_pod_create_flags`'s function-level attribute
+  cache via `tests/test_provider.py`. Running the file in isolation
+  (`pytest tests/test_provider_subprocess.py`) failed because the
+  cache-empty probe consumed the first enqueued `FakeResult`, breaking
+  the FIFO contract in `tests/conftest.py::FakeSubprocess`. Added a
+  module-scope `_stub_supported_flags_cache` autouse fixture that
+  monkeypatches `provider._supported_pod_create_flags` to
+  `lambda: frozenset()` for every test in the file. Mirrors the
+  per-test pattern at `tests/test_provider.py:410`. Tests now pass
+  identically in isolation and as part of `make ci`. Closes the
+  known-issue noted in the v0.7.2 CHANGELOG.
+
 ## [0.7.3] - 2026-05-15 — hotfix CI gates from v0.7.2
 
 ### Fixed

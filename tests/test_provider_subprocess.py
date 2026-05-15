@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from runpod_deploy import provider
 from runpod_deploy.config import build_job_context, load_job_spec
 from runpod_deploy.provider import (
     PodConnection,
@@ -15,6 +16,27 @@ from runpod_deploy.provider import (
     stop_pod,
 )
 from tests.conftest import FakeResult, FakeSubprocess
+
+
+@pytest.fixture(autouse=True)
+def _stub_supported_flags_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass the `runpodctl pod create --help` probe for every test in this file.
+
+    `provider._supported_pod_create_flags` has a function-level attribute
+    cache that, on first call in a Python process, shells out to detect
+    the locally-installed `runpodctl`'s flag set. Without this stub the
+    probe consumes the first enqueued FakeResult during isolated runs of
+    this file, breaking the FIFO `_pick_result` contract and producing
+    confusing "pod create returned no pod id" errors.
+
+    Empty `frozenset()` matches `provider._supported_pod_create_flags`'s
+    permissive fallback for unknown-format `runpodctl --help` output;
+    tests in this file don't assert on the flag set itself, only on the
+    side effects of `provision_pod` / `_wait_for_pod_ready`, so the stub
+    value is intentionally minimal. Mirrors the per-test monkeypatch at
+    `tests/test_provider.py:410`.
+    """
+    monkeypatch.setattr(provider, "_supported_pod_create_flags", lambda: frozenset())
 
 
 def _write_min_config(path: Path, *, state_file: Path) -> Path:
