@@ -4,6 +4,27 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/recipes/predictions-only-eval.md`** — new recipe documenting
+  the architectural pattern where the GPU pod emits ONLY
+  `predictions_full.parquet` + adapters and all metrics / bootstrap CIs
+  / paired tests run locally on CPU. Decouples GPU billing cost from
+  evaluation cost; bootstrap N=10K–100K becomes ~seconds on a beefy
+  local box instead of minutes of billed GPU time per shard. Includes
+  a small `test_pod_contract.py` lint pattern consumers can adopt to
+  prevent CPU-on-pod regressions. References `prompt-injection-v5`'s
+  `configs/runpod/v5_canonical_combined.yaml` as the working
+  reference. Closes #22.
+- **`docs/recipes/flash-attention-fallback.md`** — new recipe with the
+  try/except snippet transformer scorers should use to degrade
+  gracefully when the runpod-deploy GPU-failover pool lands the shard
+  on a GPU class that doesn't support `flash_attention_2`. Eliminates
+  the "works on H100, breaks on A6000" failure mode for `pod.gpu_order`
+  lists that span GPU generations. Closes #23.
+- **`docs/recipes/README.md`** — index updated with the two new
+  recipes.
+
 ## [0.4.0] - 2026-05-15 — sweep-recipe correctness + render parity
 
 ### Added

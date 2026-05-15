@@ -33,3 +33,11 @@ domain logic.
 - [`cost-reconciliation.md`](cost-reconciliation.md) — read
   `wall_time_sec` and `estimated_cost_usd` from past manifests to
   validate `assumed_hourly_rate_usd` settings and detect drift.
+- [`predictions-only-eval.md`](predictions-only-eval.md) — GPU pod
+  emits only `predictions_full.parquet` + adapters; metrics /
+  bootstrap CIs / paired tests run locally on CPU. Decouples the cost
+  of *running* the model from the cost of *evaluating* it.
+- [`flash-attention-fallback.md`](flash-attention-fallback.md) —
+  transformer scorers degrade gracefully when the GPU class doesn't
+  support `flash_attention_2` (portability across the GPU-failover
+  pool).
