@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-15 — post-publish polish (discoverability + hello example + wheel CI)
+
 ### Added
 
 - **`examples/hello/`** — new "absolute minimum" example. Targets
