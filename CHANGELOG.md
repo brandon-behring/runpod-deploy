@@ -6,6 +6,22 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`AGENTS.md`** — discoverability shim for non-Claude agents
+  (Cursor, Codex, Aider, Copilot Workspace, etc.). Per the emerging
+  agents.md convention: ~80-line redirect pointing at `CLAUDE.md` for
+  full operational standards, plus a quick-orientation summary of
+  the SRP boundary, public-API entry points, key files, test
+  invocations, and "what not to propose" callouts. Avoids forcing
+  non-Claude agents to ingest the Claude-flavored `CLAUDE.md` in
+  full.
+- **`DEVELOPING.md`** — local-development reference split out from
+  `CONTRIBUTING.md`. Covers environment setup, day-to-day commands,
+  test markers, golden-file workflow, debugging conventions, schema
+  iteration checklist, and release operations. CONTRIBUTING.md
+  becomes the high-level PR-flow + scope-boundary doc (~5 lines
+  pointer to DEVELOPING.md for the dev-side details). Separation
+  matches modal-labs's pattern.
+
 - **`scripts/regen_examples_index.py` + `make examples-index`** —
   auto-generate the "Per-directory contents" section of
   `examples/README.md` from each example's `README.md` H1 + first

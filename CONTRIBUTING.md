@@ -21,40 +21,16 @@ The deep guide lives in [`docs/extending.md`](docs/extending.md).
 
 ## Local development
 
-```sh
-git clone https://github.com/brandon-behring/runpod-deploy.git
-cd runpod-deploy
-uv venv
-uv pip install -e ".[dev]"
-make lint       # ruff + black + mypy strict
-make test       # pytest with default markers (unit + smoke)
-make coverage   # pytest with coverage report
-make ci         # all three; CI parity
-```
+For environment setup, day-to-day commands, the golden-file workflow,
+debugging conventions, and release operations: see
+**[`DEVELOPING.md`](DEVELOPING.md)**.
 
-Optional: `pre-commit install` to run ruff + black + gitleaks at
-`git commit` time. `make lint` is the canonical enforcement path.
-
-Optional shell completion (mirrors the [completion] extra documented in
-the README quickstart):
+Quickest setup:
 
 ```sh
-uv pip install -e ".[dev,completion]"
-eval "$(register-python-argcomplete runpod-deploy)"   # bash/zsh
+uv venv && uv pip install -e ".[dev]"
+make ci   # lint + test + coverage
 ```
-
-For permanent activation, append the `eval` line to your `~/.bashrc` or
-`~/.zshrc`.
-
-Optional `mypy` at push time (in addition to `make lint`):
-
-```sh
-pre-commit install --install-hooks --hook-type pre-push
-```
-
-This adds the `mypy src` hook from `.pre-commit-config.yaml`'s
-`stages: [pre-push]` block. Commit cycles stay fast (~0.1s); push-time
-gate adds ~1–3s before any actual remote push.
 
 ## What we won't merge
 
