@@ -59,8 +59,15 @@ line-length = 100
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "ARG"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# ARG002 (unused method argument): in tests, fixture args appear unused
+# until pytest injects them at collect time; common pattern in conftest
+# autouse fixtures + monkeypatch helpers. Test signatures should stay
+# expressive.
+"tests/**/*.py" = ["ARG001", "ARG002"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["runpod_deploy"]

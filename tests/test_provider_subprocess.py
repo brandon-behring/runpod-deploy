@@ -109,9 +109,8 @@ def test_wait_for_pod_ready_returns_on_running_status(
         FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})),
         FakeResult(stdout=_ssh_running_payload(host="5.6.7.8", port=22033)),
     )
-    ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
-    pod = _wait_for_pod_ready("pod-xyz", ctx, gpu_id="NVIDIA RTX A4000")
+    pod = _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA RTX A4000")
 
     assert pod == PodConnection(
         pod_id="pod-xyz", host="5.6.7.8", port=22033, gpu_id="NVIDIA RTX A4000"
@@ -130,10 +129,9 @@ def test_wait_for_pod_ready_times_out(
     monkeypatch.setattr("runpod_deploy.provider.time.time", fake_time)
     monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
     fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})))
-    ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
     with pytest.raises(RuntimeError, match="did not become SSH-ready"):
-        _wait_for_pod_ready("pod-xyz", ctx, gpu_id="NVIDIA RTX A4000")
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA RTX A4000")
 
 
 @pytest.mark.unit
@@ -144,9 +142,8 @@ def test_wait_for_pod_ready_tolerates_non_dict_payload(
         FakeResult(stdout="[]"),
         FakeResult(stdout=_ssh_running_payload()),
     )
-    ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
 
-    pod = _wait_for_pod_ready("pod-xyz", ctx, gpu_id="NVIDIA RTX A4000")
+    pod = _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA RTX A4000")
 
     assert pod.host == "1.2.3.4"
 

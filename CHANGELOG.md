@@ -4,6 +4,68 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`.github/dependabot.yml`** — weekly grouped dependency updates
+  for pip + github-actions ecosystems. Minor + patch updates batch
+  into one PR per ecosystem (review-noise control); majors land
+  individually for explicit review. Commit-message prefixes:
+  `deps:` for pip, `ci:` for actions. Monday cadence so reviews
+  surface top-of-week.
+- **`SECURITY.md`** — vulnerability disclosure policy. Documents
+  supported versions (0.7.x active, 0.6.x critical-only, ≤0.5.x
+  unsupported), the disclosure path (email
+  `brandon.m.behring@gmail.com`, expected 5-business-day response),
+  in-scope vulnerability types (auth, RCE, secrets leakage, path
+  traversal), out-of-scope deferrals (`runpodctl` itself, dependency
+  CVEs handled by `pip-audit`, consumer code), and security-relevant
+  features already in place (Trusted Publishing, secrets handling,
+  gitleaks, pip-audit, no-asserts policy).
+- **`pip-audit` CI job** (`.github/workflows/test.yml`) — runs
+  `pip-audit --disable-pip` against the resolved dev dependency set
+  on every push / PR. Advisory mode (no `--strict`); surfaces CVEs
+  in the run log + dependabot handles the actual upgrades.
+- **`test-base-install` CI job** (`.github/workflows/test.yml`) —
+  installs the package with NO extras (`uv pip install .`), then
+  smoke-imports every symbol from the public re-export surface
+  (`load_job_spec`, `build_job_context`, `run_job`,
+  `validate_local_paths`, `JobContext`, `RunpodJobSpec`, `PodSpec`,
+  `StorageSpec`, `RsyncPushSpec`, `ArtifactPullSpec`, `SecretSpec`,
+  `SCHEMA_VERSION`, `STORAGE_NETWORK_VOLUME`, `STORAGE_EPHEMERAL`,
+  `DEFAULT_STAGING_EXCLUDES`) + invokes `runpod-deploy --help`,
+  `runpod-deploy run --help`, `runpod-deploy events-query --help`.
+  Guards against a future PR accidentally adding `import pytest`
+  (or any other dev-extra dep) to `src/runpod_deploy/` and breaking
+  consumers who didn't opt into `[dev]`.
+- **Ruff `ARG` rule** in `pyproject.toml` `[tool.ruff.lint]`. Catches
+  unused function arguments. Surfaces dead-arg code as it appears;
+  per-file ignores configured for `tests/**/*.py` (ARG001/002) since
+  pytest's autouse + monkeypatch + fixture-injection patterns
+  legitimately produce arguments that look unused at static-analysis
+  time.
+
+### Removed
+
+- **Dead `ctx: JobContext` argument** from
+  `provider._wait_for_pod_ready(pod_id, ctx, *, gpu_id)`. Surfaced
+  by the new `ARG` ruff rule. Private helper — no public-API impact.
+  Three call sites in `tests/test_provider_subprocess.py` updated
+  along with the orchestrator call in `provider.provision_pod`.
+
+### Known issue (pre-existing; not introduced here)
+
+- `tests/test_provider_subprocess.py::test_provision_pod_writes_state_file_and_returns_connection`
+  passes when the full suite runs (alphabetical test ordering puts
+  `test_provider.py` first, which monkeypatches the
+  `_supported_pod_create_flags` cache). In isolation
+  (`pytest tests/test_provider_subprocess.py`) it fails because the
+  flag-detection probe consumes the first FakeResult from the FIFO
+  queue. The bug is latent in `make ci` (the cache populates as a
+  side effect of earlier tests) and doesn't affect production
+  behavior. A future PR should add a `_supported_pod_create_flags._cached`
+  reset/populate fixture to `tests/test_provider_subprocess.py`'s
+  module-scope to make the file isolation-safe. Filed as a follow-up.
+
 ## [0.7.1] - 2026-05-15 — post-audit cleanup + PyPI publishing workflow
 
 ### Added
