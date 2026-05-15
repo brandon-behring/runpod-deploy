@@ -4,6 +4,23 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Changed
+
+- **GitHub Actions bumped off Node.js 20** (deadline: 2026-06-02).
+  - `actions/checkout`: v5 → v6 (via dependabot PR #60; merged in this cycle).
+  - `actions/upload-artifact`: v4 → **v6** (hand-written, replacing dependabot PR #58 which targeted v7). v6 is the first version using `node24` in its `action.yml`.
+  - `actions/download-artifact`: v4 → **v7** (hand-written, replacing dependabot PR #59 which targeted v8). v7 is the first version using `node24` in its `action.yml`.
+  - Verified per-version via `gh api repos/actions/<action>/contents/action.yml?ref=<tag>`. The release workflow's run page should show **zero** Node.js 20 deprecation annotations after the upgrade.
+- **`.github/dependabot.yml`**: added `ignore` rules for
+  `version-update:semver-major` on `actions/checkout`,
+  `actions/upload-artifact`, and `actions/download-artifact`. Dependabot
+  still files minor + patch updates automatically (via the existing
+  `actions-minor-patch` group); major bumps now require manual review.
+  Encodes "manual review for release-pipeline-critical actions"
+  permanently — these actions touch the publish path and majors can
+  change behavior (e.g., download-artifact v5's by-ID path semantics)
+  or runtime (node20 → node24).
+
 ### Fixed
 
 - **`tests/test_provider_subprocess.py` isolation**: this file's tests
