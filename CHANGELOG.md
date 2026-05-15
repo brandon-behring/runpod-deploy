@@ -4,6 +4,37 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--scan-consumer` no longer floods output with noise from rsync-excluded
+  paths** (#76). `scan_staged_payloads_for_absolute_paths` now honors each
+  staging entry's `RsyncPushSpec.effective_excludes` (defaults +
+  `excludes` + `excludes_extra`) AND always skips a universal Python-noise
+  set (`.venv/`, `.git/`, `.pytest_cache/`, `.ruff_cache/`, `.mypy_cache/`,
+  `**/__pycache__/`, `**/*.pyc`) — even when the consumer hasn't set
+  `excludes_default: true`. Concrete impact: post_transformers's scan
+  output dropped from 3118 lines to the handful of real findings. New
+  private helper `_path_matches_rsync_exclude` implements a small subset
+  of rsync's filter semantics (trailing `/` for directory-only matches,
+  `**/` for any-depth, embedded `/` for root-anchored prefix, basename
+  match anywhere otherwise). No new runtime dependency.
+- **Optional-dependencies scans now honor what the pod actually installs**
+  (#78, #79). Warnings for `runpod-deploy` in
+  `[project.optional-dependencies.<name>]` (previously misleading when
+  the documented local-orchestration pattern uses a `cloud` extra) and
+  for `torch` in any optional group (previously fired even when the
+  pod's run-body installed only an unrelated extra) now only emit when
+  the optional group's name is actually installed on the pod. The
+  scanner parses every `setup[*].command` and `run.body` for
+  `uv sync --extra <name>` (and `--all-extras`) invocations; when no
+  `uv sync` is detected, optional-extras warnings are suppressed
+  entirely (pre-built-image case: no signal that anything beyond
+  `[project.dependencies]` reaches the pod). Both `--extra X` and
+  `--extra=X` forms are recognized. The `runpod-deploy` warning message
+  was also rewritten to call out the specific `--extra <name>` flag
+  that installs it, instead of the previous flat "should not ship to
+  the pod" wording. `[project.dependencies]` scanning is unchanged.
+
 ## [0.7.6] - 2026-05-15 — comparative-gap audit (argcomplete + CodeQL + AGENTS.md + doctest gate)
 
 ### Added
