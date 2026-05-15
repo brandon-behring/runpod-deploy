@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-15 — forensics + reproducibility (post-V5 backlog completion)
+
 ### Added
 
 - **`pod.python_version`** new optional YAML field. When set to a
