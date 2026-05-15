@@ -33,6 +33,19 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # Constrain major-version bumps of release-pipeline-critical actions
+    # to manual review. These actions touch the publish path (checkout +
+    # artifact upload/download); major bumps can change behavior (e.g.,
+    # download-artifact v5's by-ID path semantics) or runtime
+    # (node20 → node24). Dependabot still files minor + patch updates
+    # automatically via the group above.
+    ignore:
+      - dependency-name: "actions/checkout"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "actions/upload-artifact"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "actions/download-artifact"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "ci"
       include: "scope"
