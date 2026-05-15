@@ -21,6 +21,14 @@ classifiers = [
 ]
 dependencies = ["pyyaml>=6.0"]
 
+[project.urls]
+Homepage = "https://github.com/brandon-behring/runpod-deploy"
+Source = "https://github.com/brandon-behring/runpod-deploy"
+Issues = "https://github.com/brandon-behring/runpod-deploy/issues"
+Changelog = "https://github.com/brandon-behring/runpod-deploy/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/brandon-behring/runpod-deploy/blob/main/docs/lifecycle.md"
+Releases = "https://github.com/brandon-behring/runpod-deploy/releases"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
