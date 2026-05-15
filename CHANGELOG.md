@@ -4,6 +4,21 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`runpod-deploy run --print-run-dir`** flag. When set, emits a
+  single grep-friendly `RUN_DIR=<absolute-path>` line on stdout
+  immediately after the run-directory path is resolved (before any
+  pod-provisioning). Intended for parallel-sweep drivers that need a
+  machine-parseable handle to this attempt's run dir without racing
+  `ls -td artifacts/runpod/*` (the prior workaround documented in
+  `docs/recipes/multi-config-sweep.md`). Off by default; existing
+  consumers parsing stdout are unaffected. `run_job(..., print_run_dir=
+  bool)` is the library-level entry. 2 new smoke tests in
+  `tests/test_orchestrator.py` cover the flag-on (exactly one line on
+  stdout, none on stderr) and flag-absent (no line anywhere) contracts.
+  Closes #15 (root-cause portion).
+
 ### Fixed
 
 - **`docs/recipes/multi-config-sweep.md`** rewritten with correct

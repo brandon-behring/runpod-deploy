@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping
@@ -50,6 +51,7 @@ def run_job(
     datacenter_id_override: str | None = None,
     max_gpu_price_usd: float | None = None,
     cli_variables: Mapping[str, str] | None = None,
+    print_run_dir: bool = False,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -60,10 +62,18 @@ def run_job(
     optional step markers) → telemetry capture_end → pull log + artifacts
     (always pulls log when run started, even on failure) → stop pod →
     write v2 manifest with all captured fields.
+
+    When ``print_run_dir`` is True, a single ``RUN_DIR=<path>`` line is
+    written to ``sys.stdout`` immediately after the run-dir path is
+    resolved. Intended for parallel-sweep drivers that need a
+    machine-parseable handle without racing ``ls -td``.
     """
     if offline_dry_run:
         dry_run = True
     ctx = build_job_context(spec, config_path, cli_variables=cli_variables)
+    if print_run_dir:
+        sys.stdout.write(f"RUN_DIR={ctx.run_dir}\n")
+        sys.stdout.flush()
     validate_local_paths(ctx)
     _print_budget(spec)
     deploy_metadata = _capture_deploy_metadata(spec, ctx)
