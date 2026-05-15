@@ -7,6 +7,12 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+        # Catches accidental commits of large files (datasets, model weights,
+        # build artifacts). 500KB ceiling is generous for source repos; bump
+        # via `--maxkb=N` if a legitimate large file (e.g., a binary fixture)
+        # is needed.
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.13
     hooks:
