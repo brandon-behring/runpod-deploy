@@ -355,7 +355,7 @@ def _push_workspace(runner: RemoteRunner, ctx: JobContext) -> None:
             label=spec.label,
             source=ctx.render(spec.source),
             destination=ctx.render(spec.destination),
-            excludes=tuple(ctx.render(exclude) for exclude in spec.excludes),
+            excludes=tuple(ctx.render(exclude) for exclude in spec.effective_excludes),
             delete=spec.delete,
         )
         runner.rsync_push(transfer)
