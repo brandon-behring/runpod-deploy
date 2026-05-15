@@ -80,7 +80,7 @@ jobs:
       - name: Install pip-audit
         run: uv pip install pip-audit
       - name: Run pip-audit
-        run: uv run pip-audit --disable-pip
-        # Note: --disable-pip avoids the warning about pip-deprecated tooling.
-        # Removing --strict means unfixed vulnerabilities don't fail the build;
-        # surface in logs, action via dependabot PRs.
+        # Audit the resolved venv. No --strict — unfixed vulnerabilities don't
+        # fail the build; they surface in the run log + dependabot handles the
+        # actual upgrades on its weekly cadence.
+        run: uv run pip-audit
