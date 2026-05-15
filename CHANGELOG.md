@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-15 — `--scan-consumer` false-positive triage (closes #76, #78, #79)
+
 ### Fixed
 
 - **`--scan-consumer` no longer floods output with noise from rsync-excluded
