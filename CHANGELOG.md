@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-15 — edge-case rigor + integration + golden-file contracts
+
 ### Added
 
 - **`tests/test_cli_golden.py` + `tests/fixtures/golden/*.txt`** — new
