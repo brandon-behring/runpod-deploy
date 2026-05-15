@@ -69,6 +69,38 @@ preflight:
 
 `with_env: true` prepends `remote_env.source_files` and `remote_env.exports`.
 
+## Pod field: `python_version` (optional, default: unset)
+
+```yaml
+pod:
+  image: runpod/pytorch:2.4.0
+  datacenters: [EU-RO-1]
+  gpu_order: ["NVIDIA H100 80GB HBM3"]
+  python_version: "3.13.5"   # ← pin via uv
+```
+
+When set, the orchestrator auto-injects a preflight step that runs
+`uv python install <ver> && cd <first-staging-destination> && uv python pin <ver>`.
+This installs the requested CPython interpreter on the pod and writes a
+`.python-version` file into the staged project directory so subsequent
+`uv sync` invocations honor the pin.
+
+**Format**: `3.MINOR` or `3.MINOR.PATCH` (e.g. `"3.13"` or `"3.13.5"`).
+Pre-release suffixes are rejected — the field exists for reproducibility,
+not for chasing alphas.
+
+**Failure mode**: a non-zero exit from the install or pin aborts the
+run before the user's `preflight` or run-body executes. Surfaces the
+issue cheaply (~30s of pod time) rather than letting a later `uv sync`
+fall back to the base-image interpreter.
+
+**Why preflight, not setup**: the pin must write `.python-version` into
+the staged repo dir, which doesn't exist until after `_push_workspace`
+runs. Injecting at preflight[0] is the correctness-preserving placement.
+
+See [`docs/recipes/reproducibility.md`](recipes/reproducibility.md) for
+the trade-offs.
+
 ## Staging (rsync push)
 
 `staging` is a list of local-to-remote rsync transfers:

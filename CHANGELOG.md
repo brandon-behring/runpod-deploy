@@ -6,6 +6,45 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`pod.python_version`** new optional YAML field. When set to a
+  string matching `3.MINOR` or `3.MINOR.PATCH` (e.g. `"3.13"` or
+  `"3.13.5"`; pre-release suffixes intentionally rejected for
+  reproducibility), the orchestrator auto-injects a preflight step
+  that runs
+  `uv python install <ver> && cd <first-staging-destination> && uv python pin <ver>`.
+  Installs the requested CPython interpreter (uv-managed cache, ~30s
+  amortized first-pod cost) AND writes `.python-version` into the
+  staged project dir so the user's `uv sync` honors the pin.
+
+  Closes the reproducibility footgun where `requires-python = ">=3.13"`
+  in pyproject could silently resolve to 3.14 next month, undermining
+  the "git SHA + uv.lock = reproducible" claim.
+
+  **Implementation note**: the auto-injection lands at `preflight[0]`
+  (NOT `setup[0]`), because setup runs before staging — the
+  `.python-version` file must land in the staged project dir, which
+  doesn't exist until after `_push_workspace`. This is a slight
+  deviation from the initial sketch but is the correctness-preserving
+  placement (pin file survives rsync `--delete` because staging is
+  already done).
+
+  **Failure mode**: a non-zero exit from the install or pin aborts the
+  run before user `preflight` or run-body executes (per
+  `check=True` on `ssh_exec`). Surfaces a fixable config issue
+  cheaply (~30s of pod time) instead of letting a later `uv sync`
+  silently fall back to the base-image interpreter.
+
+  New helper `orchestrator._build_python_pin_preflight(spec)` returns
+  an empty tuple when `python_version` is unset (existing YAMLs
+  unaffected). 12 new tests in `tests/test_config.py` cover valid
+  format acceptance (parametrized over `3.13`, `3.13.5`, `3.14`,
+  `3.12.10`) and rejection of malformed/pre-release values; 2 new
+  smoke tests in `tests/test_orchestrator.py` assert the injected
+  command shape (install + cd + pin) and the no-injection default.
+  Schema is additive optional; **no `SCHEMA_VERSION` bump** per
+  CLAUDE.md §5. New recipe `docs/recipes/reproducibility.md` +
+  `docs/config-reference.md` entry. Closes #24.
+
 - **`runpod-deploy events-query`** new subcommand. Aggregates
   `events.jsonl` rows across every run directory under `--root DIR`
   (defaults to `artifacts/runpod`), optionally filtered by

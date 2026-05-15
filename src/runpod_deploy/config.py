@@ -31,6 +31,7 @@ __all__ = [
 ]
 
 _OCTAL_MODE_RE = re.compile(r"^0?[0-7]{3}$")
+_PYTHON_VERSION_RE = re.compile(r"^3\.\d+(\.\d+)?$")
 
 SCHEMA_VERSION = 2
 STORAGE_NETWORK_VOLUME = "network_volume"
@@ -78,6 +79,7 @@ class PodSpec:
     spot: bool = False
     min_vcpu_count: int | None = None
     min_memory_gb: int | None = None
+    python_version: str | None = None
 
     def __post_init__(self) -> None:
         if not self.image:
@@ -94,6 +96,12 @@ class PodSpec:
             raise ValueError(f"pod.min_vcpu_count must be > 0, got {self.min_vcpu_count}")
         if self.min_memory_gb is not None and self.min_memory_gb <= 0:
             raise ValueError(f"pod.min_memory_gb must be > 0, got {self.min_memory_gb}")
+        if self.python_version is not None and not _PYTHON_VERSION_RE.match(self.python_version):
+            raise ValueError(
+                f"pod.python_version must match '3.MINOR' or '3.MINOR.PATCH' "
+                f"(e.g. '3.13' or '3.13.5'); got {self.python_version!r}. "
+                "Pre-release suffixes are intentionally rejected for reproducibility."
+            )
 
 
 @dataclass(frozen=True, slots=True)

@@ -224,6 +224,88 @@ def test_staging_unknown_key_still_rejected(tmp_path: Path) -> None:
         load_job_spec(config)
 
 
+# ---- pod.python_version (issue #24) ----
+
+
+@pytest.mark.unit
+def test_pod_python_version_defaults_to_none(tmp_path: Path) -> None:
+    """Existing YAMLs (no python_version key) get None and preserve current behavior."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    spec = load_job_spec(config)
+    assert spec.pod.python_version is None
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("version", ["3.13", "3.13.5", "3.14", "3.12.10"])
+def test_pod_python_version_accepts_valid_formats(tmp_path: Path, version: str) -> None:
+    """Versions matching `3.MINOR` or `3.MINOR.PATCH` are accepted."""
+    config = _write_minimal_config(
+        tmp_path / "job.yaml",
+        extra=f'pod:\n  image: img\n  datacenters: [EU-RO-1]\n  gpu_order: [g1]\n  python_version: "{version}"\n',
+    )
+    # The minimal config already declares a `pod:` block; overwriting via
+    # a second `pod:` mapping at top level is a duplicate-key issue. Write
+    # a one-off config with the field embedded inline instead.
+    config.write_text(f"""
+schema_version: 2
+name: demo
+run_id_prefix: demo
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: [g1]
+  python_version: "{version}"
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    spec = load_job_spec(config)
+    assert spec.pod.python_version == version
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "3",  # too short
+        "3.13.5a1",  # pre-release suffix rejected
+        "3.13rc1",
+        "python3.13",
+        "3.13.5.0",  # too many segments
+        "",  # empty
+        "3.13 ",  # trailing space
+    ],
+)
+def test_pod_python_version_rejects_invalid_formats(tmp_path: Path, bad: str) -> None:
+    """Pre-release suffixes and malformed versions are rejected for reproducibility."""
+    config = tmp_path / "job.yaml"
+    config.write_text(f"""
+schema_version: 2
+name: demo
+run_id_prefix: demo
+pod:
+  image: img
+  datacenters: [EU-RO-1]
+  gpu_order: [g1]
+  python_version: "{bad}"
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    with pytest.raises(ValueError, match="pod.python_version must match"):
+        load_job_spec(config)
+
+
 @pytest.mark.unit
 def test_default_staging_excludes_contents_are_hygiene_only(tmp_path: Path) -> None:
     """DEFAULT_STAGING_EXCLUDES contents lock the v0.4 contract.

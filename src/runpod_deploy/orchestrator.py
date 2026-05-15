@@ -123,7 +123,9 @@ def run_job(
         _run_commands(runner, ctx, spec.setup, label="setup")
         _stage_secrets(runner, ctx)
         _push_workspace(runner, ctx)
-        _run_commands(runner, ctx, spec.preflight, label="preflight")
+        _run_commands(
+            runner, ctx, _build_python_pin_preflight(spec) + spec.preflight, label="preflight"
+        )
         _launch_remote_job(runner, ctx)
         run_started = True
         tel.start_sampling()
@@ -269,6 +271,43 @@ def _wait_for_sshd(runner: RemoteRunner) -> None:
             logger.info(f"[ssh] not ready ({type(exc).__name__}); retrying in {delay}s")
             time.sleep(delay)
     raise RuntimeError(f"sshd never became ready; last_error={last_error!r}")
+
+
+def _build_python_pin_preflight(spec: RunpodJobSpec) -> tuple[CommandSpec, ...]:
+    """Return the auto-injected `uv python install + pin` step when `pod.python_version` is set.
+
+    Empty tuple when not set (default; existing YAMLs unaffected).
+
+    Runs as preflight[0] (NOT setup[0]) because the pin must write
+    `.python-version` into the staged project directory, which doesn't
+    exist until after `_push_workspace`. Slightly later than the
+    original "setup[0]" sketch but correctness-preserving — the pin
+    file survives rsync `--delete` because staging is already done.
+
+    Failure mode (per the Q4 decision): `check=True` on `ssh_exec`
+    raises `RemoteRunError` on non-zero exit, which aborts the run
+    before the user's preflight or run-body executes. Surfaces the
+    install failure cheaply (~30s of pod time) rather than letting a
+    later `uv sync` silently fall back to the base-image interpreter.
+    """
+    version = spec.pod.python_version
+    if version is None:
+        return ()
+    # Find the first staging entry's destination as the pin target. If no
+    # staging is configured, fall back to $HOME (degenerate but valid —
+    # the user has no remote repo to pin against; the install alone is
+    # still useful for downstream commands that respect $HOME/.python-version).
+    pin_target = "$HOME"
+    for stage in spec.staging:
+        pin_target = stage.destination
+        break
+    command = (
+        f"uv python install {version} "
+        f"&& cd {pin_target} "
+        f"&& uv python pin {version} "
+        f'&& echo "[runpod-deploy] pinned Python {version} at $(pwd)/.python-version"'
+    )
+    return (CommandSpec(command=command, timeout_sec=300, with_env=False),)
 
 
 def _run_commands(

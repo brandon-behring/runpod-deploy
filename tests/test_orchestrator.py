@@ -142,6 +142,113 @@ stop:
 
 
 @pytest.mark.smoke
+def test_python_version_prepends_uv_install_pin_preflight(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`pod.python_version` set → auto-injected `uv python install + pin` runs as preflight[0].
+
+    Contract: the rendered command logged at preflight[0] must contain
+    `uv python install <ver>` and `uv python pin <ver>`, and must `cd`
+    into the first staging entry's destination before the pin so the
+    `.python-version` file lands in the staged project dir.
+    """
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+state_file: ~/.runpod-demo-current
+local:
+  project_root: .
+  required_paths:
+    - pyproject.toml
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [US-MD-1]
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+  python_version: "3.13.5"
+storage:
+  mode: ephemeral
+  volume_gb: 20
+ssh:
+  key_path: ~/.ssh/id_ed25519
+setup: []
+staging:
+  - label: repo
+    source: "{project_root}/"
+    destination: "/workspace/demo/"
+    excludes: [".git/"]
+preflight:
+  - command: "echo user-preflight"
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+artifacts: []
+stop:
+  on_success: true
+  on_failure: true
+""")
+    run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
+    log = caplog.text
+    # Injected preflight[0] must include the install + pin commands AND
+    # cd into the staging destination (so .python-version lands there).
+    assert "uv python install 3.13.5" in log
+    assert "uv python pin 3.13.5" in log
+    assert "cd /workspace/demo/" in log
+    # The user's own preflight command still runs (auto-inject prepends, not replaces).
+    assert "echo user-preflight" in log
+
+
+@pytest.mark.smoke
+def test_python_version_absent_means_no_pin_injection(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without `pod.python_version`, no `uv python install` line appears."""
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='demo'\n")
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+state_file: ~/.runpod-demo-current
+local:
+  project_root: .
+  required_paths:
+    - pyproject.toml
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [US-MD-1]
+  gpu_order:
+    - NVIDIA A100-SXM4-80GB
+storage:
+  mode: ephemeral
+  volume_gb: 20
+ssh:
+  key_path: ~/.ssh/id_ed25519
+setup: []
+staging: []
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+artifacts: []
+stop:
+  on_success: true
+  on_failure: true
+""")
+    run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
+    assert "uv python install" not in caplog.text
+    assert "uv python pin" not in caplog.text
+
+
+@pytest.mark.smoke
 def test_print_run_dir_absent_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
