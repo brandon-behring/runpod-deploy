@@ -216,6 +216,72 @@ def test_provision_pod_dry_run_returns_sentinel(
     assert fake_subprocess.calls == []
 
 
+@pytest.mark.unit
+def test_provision_pod_name_uses_rendered_run_id(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    """T2: regression for v0.4 PR-C at the use site.
+
+    A YAML with `name: demo-{seed}` must produce a pod named
+    `demo-42-<ts>` when invoked with `--var seed=42`. The render fix
+    landed in `build_job_context` (PR-C ships `ctx.run_id` as the
+    rendered value); this test asserts the *use site* —
+    `provider._build_pod_create_argv` at provider.py:285 — actually
+    passes that rendered value to `runpodctl pod create --name`.
+    Without this regression the v0.4 PR-C win silently un-wires.
+    """
+    state_file = tmp_path / "state.json"
+    config_path = tmp_path / "job.yaml"
+    config_path.write_text(f"""
+schema_version: 2
+name: demo-{{seed}}
+run_id_prefix: demo-{{seed}}
+state_file: {state_file}
+pod:
+  image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+  datacenters: [EU-RO-1]
+  gpu_order:
+    - NVIDIA RTX A4000
+storage:
+  mode: ephemeral
+  volume_gb: 20
+run:
+  script_path: /workspace/demo.sh
+  log_path: /workspace/demo.log
+  success_marker: "[demo] DONE"
+  body: |
+    echo "[demo] DONE"
+""")
+    fake_subprocess.enqueue(
+        FakeResult(stdout='{"id": "pod-xyz"}'),
+        FakeResult(stdout=_ssh_running_payload(host="9.9.9.9", port=22044)),
+    )
+    spec = load_job_spec(config_path)
+    ctx = build_job_context(spec, config_path, cli_variables={"seed": "42"})
+
+    # Sanity: ctx.run_id holds the rendered prefix already.
+    assert ctx.run_id.startswith("demo-42-"), ctx.run_id
+    assert "{seed}" not in ctx.run_id
+
+    provision_pod(
+        ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+    )
+
+    # The pod-create argv must carry the rendered `--name`.
+    create_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "create"]]
+    assert len(create_calls) == 1
+    create_argv = create_calls[0]
+    assert "--name" in create_argv, create_argv
+    name_index = create_argv.index("--name")
+    name_value = create_argv[name_index + 1]
+    assert name_value.startswith(
+        "demo-42-"
+    ), f"--name must carry the rendered run_id; got {name_value!r}"
+    assert (
+        "{seed}" not in name_value
+    ), f"--name must not contain the raw template literal; got {name_value!r}"
+
+
 # ---------- stop_pod ----------
 
 

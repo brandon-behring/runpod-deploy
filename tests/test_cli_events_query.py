@@ -304,3 +304,111 @@ def test_events_query_no_matches_after_filter_info_logs(
     rc = main(["events-query", "--root", str(root), "--filter", "event=nonexistent"])
     assert rc == 0
     assert "no matching events" in caplog.text
+
+
+# ---- v0.7 PR-N gap fills (T3, T4, T5) ----
+
+
+@pytest.mark.unit
+def test_events_query_filter_matches_numeric_field_via_string_cast(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T3: numeric event-field values match `--filter KEY=VALUE` via `str()`.
+
+    The filter predicate compares `str(event[key]) == expected_value`.
+    A JSON `42` (int) in the event field matches `--filter wall_time_sec=42`
+    because both sides cast to the string `"42"`. Asserting this contract
+    so the comparison semantics aren't accidentally changed.
+    """
+    root = tmp_path / "runpod"
+    _write_events(
+        root / "20260515T000000Z",
+        [
+            {"ts_utc": _ts_recent(30), "event": "step_completed", "duration_sec": 42},
+            {"ts_utc": _ts_recent(20), "event": "step_completed", "duration_sec": 99},
+        ],
+    )
+    rc = main(
+        [
+            "events-query",
+            "--root",
+            str(root),
+            "--filter",
+            "duration_sec=42",
+            "--json",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["duration_sec"] == 42
+
+
+@pytest.mark.unit
+def test_events_query_skips_malformed_jsonl_rows(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    """T4: malformed lines in events.jsonl are skipped (with WARNING); well-formed rows still emitted.
+
+    `forensics.load_events` skips malformed JSON lines. This test
+    asserts the events-query subcommand reaches the rest of the file
+    despite a corrupt line — defensive forensics behavior so one bad
+    write doesn't blind the operator to surrounding context.
+    """
+    import logging as _logging
+
+    root = tmp_path / "runpod"
+    run_dir = root / "20260515T000000Z"
+    run_dir.mkdir(parents=True)
+    events_file = run_dir / "events.jsonl"
+    # Three lines: valid, malformed JSON, valid again.
+    events_file.write_text(
+        json.dumps({"ts_utc": _ts_recent(60), "event": "gpu_selected"})
+        + "\n{this is not json}\n"
+        + json.dumps({"ts_utc": _ts_recent(30), "event": "artifact_pull_completed"})
+        + "\n"
+    )
+    caplog.set_level(_logging.WARNING, logger="runpod_deploy")
+
+    rc = main(["events-query", "--root", str(root), "--json"])
+    out = capsys.readouterr().out
+    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    assert rc == 0
+    # Two well-formed rows survived; the malformed line was skipped.
+    assert len(rows) == 2
+    assert {r["event"] for r in rows} == {"gpu_selected", "artifact_pull_completed"}
+    # The WARNING about the malformed line was logged.
+    assert "malformed JSON" in caplog.text
+
+
+@pytest.mark.unit
+def test_events_query_since_drops_events_with_unparseable_ts_utc(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T5: when `--since` is set, events with missing/unparseable `ts_utc` are dropped.
+
+    `--since 1h` only makes sense if the event has a parseable
+    timestamp. Events lacking `ts_utc` or with garbage values are
+    excluded from the window (rather than silently included as
+    "always within window") so the operator sees consistent results.
+    """
+    root = tmp_path / "runpod"
+    _write_events(
+        root / "20260515T000000Z",
+        [
+            # Good: recent
+            {"ts_utc": _ts_recent(60), "event": "good_recent"},
+            # Bad: no ts_utc field
+            {"event": "missing_ts"},
+            # Bad: garbage ts_utc
+            {"ts_utc": "not-a-date", "event": "unparseable_ts"},
+        ],
+    )
+    rc = main(["events-query", "--root", str(root), "--since", "1h", "--json"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    rows = [json.loads(line) for line in out.splitlines() if line.strip()]
+    assert len(rows) == 1
+    assert rows[0]["event"] == "good_recent"

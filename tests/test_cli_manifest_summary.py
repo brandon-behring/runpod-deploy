@@ -213,3 +213,63 @@ run:
             main(["run", "--config", str(config), "--gpu-id", "g1", "--offline-dry-run"])
         except Exception as exc:
             raise SystemExit(str(exc)) from exc
+
+
+# ---- v0.7 PR-N gap fill (T6) ----
+
+
+@pytest.mark.unit
+def test_manifest_summary_root_skips_malformed_manifest(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T6: `--root` skips manifests that fail to parse, logs WARN, continues.
+
+    Defensive aggregation: one corrupt manifest doesn't blind the
+    operator to the rest of the sweep. Asserts (a) WARN is logged,
+    (b) well-formed manifests still appear, (c) TOTALS reflect only
+    parsed manifests.
+    """
+    import logging as _logging
+
+    root = tmp_path / "artifacts" / "runpod"
+
+    # Manifest A: well-formed.
+    _write_run_manifest(
+        root / "20260514T120000Z",
+        run_id="demo-a",
+        wall_time_sec=1000.0,
+        estimated_cost_usd=2.0,
+        failed=False,
+    )
+    # Manifest B: malformed JSON.
+    bad_dir = root / "20260514T130000Z"
+    bad_dir.mkdir(parents=True)
+    (bad_dir / "runpod_deploy_pull_manifest.json").write_text("{not valid json")
+    # Manifest C: well-formed.
+    _write_run_manifest(
+        root / "20260514T140000Z",
+        run_id="demo-c",
+        wall_time_sec=500.0,
+        estimated_cost_usd=1.5,
+        failed=True,
+    )
+
+    caplog.set_level(_logging.WARNING, logger="runpod_deploy")
+    rc = main(["manifest-summary", "--root", str(root)])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    # WARN logged for the malformed manifest.
+    assert "failed to parse" in caplog.text
+    # Well-formed manifests still appear.
+    assert "run_id:        demo-a" in out
+    assert "run_id:        demo-c" in out
+    # TOTALS reflects rglob's manifest count (3) but parsed-only stats.
+    assert "manifests:        3" in out
+    assert "failed:           1" in out
+    # 1000 + 500 = 1500 (B skipped because JSON invalid)
+    assert "wall_time_sec:    1500.0" in out
+    # 2.0 + 1.5 = 3.5
+    assert "estimated_cost:   $3.50" in out
