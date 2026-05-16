@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runpod-deploy"
-version = "0.7.9"
+version = "0.8.0"
 description = "Config-driven RunPod orchestration for reusable GPU project deployments."
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,7 @@ Homepage = "https://github.com/brandon-behring/runpod-deploy"
 Source = "https://github.com/brandon-behring/runpod-deploy"
 Issues = "https://github.com/brandon-behring/runpod-deploy/issues"
 Changelog = "https://github.com/brandon-behring/runpod-deploy/blob/main/CHANGELOG.md"
-Documentation = "https://github.com/brandon-behring/runpod-deploy/blob/main/docs/lifecycle.md"
+Documentation = "https://brandon-behring.github.io/runpod-deploy/"
 Releases = "https://github.com/brandon-behring/runpod-deploy/releases"
 
 [project.optional-dependencies]
