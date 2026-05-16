@@ -69,6 +69,6 @@ __all__ = [
     "validate_local_paths",
 ]
 
-__version__ = "0.7.8"
+__version__ = "0.7.9"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())

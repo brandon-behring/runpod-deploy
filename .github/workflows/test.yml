@@ -142,8 +142,15 @@ jobs:
         run: uv venv --python 3.13
       - name: Install
         run: uv pip install -e ".[docs]"
-      - name: Build Sphinx site (strict)
-        run: uv run sphinx-build -b html -W --keep-going docs/source/ docs/build/html/
+      - name: Build Sphinx site (two-pass; autosummary writes stubs on pass 1)
+        # Pass 1 generates autosummary stub pages under
+        # docs/source/api/generated/ (gitignored). Pass 2 is the strict
+        # gate — by then every :toctree: reference resolves, so -W can
+        # surface real warnings without false-positives on freshly-
+        # generated stubs.
+        run: |
+          uv run sphinx-build -b html docs/source/ docs/build/html/
+          uv run sphinx-build -b html -W --keep-going docs/source/ docs/build/html/
 
   # Run pip-audit against the locked dependency set. CVE detection.
   # Allows the workflow to pass on unfixed vulnerabilities by default

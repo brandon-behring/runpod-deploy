@@ -68,6 +68,7 @@ doctest:
 
 docs:
 	cd docs && $(MAKE) html SPHINXBUILD="../$(PYTHON) -m sphinx"
+	cd docs && $(MAKE) html SPHINXBUILD="../$(PYTHON) -m sphinx" SPHINXOPTS="-W --keep-going"
 
 docs-serve:
 	cd docs && ../$(PYTHON) -m sphinx_autobuild source build/html

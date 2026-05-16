@@ -4,6 +4,30 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-16 — Per-module autodoc API reference (Sphinx Phase 2 of 3)
+
+### Added
+
+- **Per-module autodoc API reference**. Six new pages under
+  `docs/source/api/` (one per module: `config`, `orchestrator`,
+  `provider`, `pricing`, `transport`, `metadata`) plus an `api/index.md`
+  overview. Each page uses Sphinx's `autosummary` + `autodoc` to render
+  per-symbol stubs from each public function/class's docstring,
+  including frozen-dataclass field tables and `__post_init__`-derived
+  validation behavior. Stub pages live at
+  `docs/source/api/generated/<module>/<symbol>.md` (gitignored;
+  regenerated on every build). New "API reference" section in
+  `docs/source/index.md` toctree.
+- `{ref}` modindex (Python module index) added to the Indices section.
+
+### Changed
+
+- **CI `docs` job now runs a two-pass `sphinx-build`** to absorb
+  autosummary's known first-build behavior (stub pages are written
+  during pass 1; reference resolution happens during pass 2). Pass 2
+  is the strict gate (`-W --keep-going`). `make docs` mirrors the same
+  two-pass sequence locally.
+
 ## [0.7.8] - 2026-05-16 — Sphinx documentation infrastructure (Phase 1 of 3)
 
 ### Added
