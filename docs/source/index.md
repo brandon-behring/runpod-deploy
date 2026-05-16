@@ -42,6 +42,21 @@ recipes/reproducibility
 examples
 ```
 
+## API reference
+
+```{toctree}
+:maxdepth: 1
+:caption: API reference
+
+api/index
+api/config
+api/orchestrator
+api/provider
+api/pricing
+api/transport
+api/metadata
+```
+
 ## Project
 
 ```{toctree}
@@ -61,4 +76,5 @@ adr/0003-git-tags
 ## Indices
 
 - {ref}`genindex`
+- {ref}`modindex`
 - {ref}`search`
