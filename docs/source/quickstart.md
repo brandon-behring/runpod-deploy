@@ -45,7 +45,7 @@ runpod-deploy --help
 You should see the subcommand list including `validate`, `run`,
 `gpu-list`, `manifest-summary`, `events-query`, ...
 
-> **For contributors**: see [`CONTRIBUTING.md`](../CONTRIBUTING.md) for
+> **For contributors**: see [`CONTRIBUTING.md`](https://github.com/brandon-behring/runpod-deploy/blob/main/CONTRIBUTING.md) for
 > the editable-install flow (`git clone` + `uv pip install -e ".[dev]"`),
 > pre-commit setup, and the contribution guidelines.
 
