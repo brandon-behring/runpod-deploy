@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "runpod-deploy"
-version = "0.7.7"
+version = "0.7.8"
 description = "Config-driven RunPod orchestration for reusable GPU project deployments."
 readme = "README.md"
 license = "MIT"
@@ -52,6 +52,21 @@ dev = [
 #   eval "$(register-python-argcomplete runpod-deploy)"   # bash/zsh
 completion = [
     "argcomplete>=3.5",
+]
+# Sphinx documentation build (Phase 1 of 3, v0.7.8). Install via:
+#   uv pip install -e .[docs]
+# then build via `make docs` (one-shot) or `make docs-serve` (live-reload).
+# See docs/source/conf.py for Sphinx configuration. jupyter-cache is a
+# transitive dep of myst-nb but unused — `nb_execution_mode = "off"`.
+docs = [
+    "sphinx>=7.3",
+    "pydata-sphinx-theme>=0.16",
+    "myst-nb>=1.1",
+    "linkify-it-py>=2.0",
+    "sphinx-copybutton>=0.5",
+    "sphinx-design>=0.6",
+    "sphinx-autodoc-typehints>=2.0",
+    "sphinx-autobuild>=2024.10.3",
 ]
 
 [project.scripts]

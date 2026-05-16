@@ -4,6 +4,42 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-05-16 — Sphinx documentation infrastructure (Phase 1 of 3)
+
+### Added
+
+- **Sphinx documentation infrastructure** (Phase 1 of 3). Builds the
+  existing markdown docs into a navigable Sphinx site using
+  pydata-sphinx-theme + myst-nb. Run locally with `make docs` (one-shot)
+  or `make docs-serve` (live-reload via sphinx-autobuild). All existing
+  `docs/*.md`, `docs/recipes/*.md`, and `docs/adr/*.md` have been moved
+  to `docs/source/` via `git mv` (history preserved). Per-module
+  autodoc API pages follow in Phase 2; GitHub Pages deploy in Phase 3.
+- **New `[docs]` optional-dependencies extra**: `sphinx>=7.3`,
+  `pydata-sphinx-theme>=0.16`, `myst-nb>=1.1`, `linkify-it-py>=2.0`,
+  `sphinx-copybutton>=0.5`, `sphinx-design>=0.6`,
+  `sphinx-autodoc-typehints>=2.0`, `sphinx-autobuild>=2024.10.3`.
+  Install via `uv pip install -e .[docs]`. `nb_execution_mode = "off"`
+  — `jupyter-cache` is a transitive dep of myst-nb but unused since
+  there are no executable cells.
+- **`docs` CI job** in `.github/workflows/test.yml` runs
+  `sphinx-build -b html -W --keep-going` on every PR (strict: warnings
+  fail the build; `--keep-going` surfaces every warning in one log for
+  faster fix-cycles).
+- **`scripts/regen_examples_index.py`** now writes a second output,
+  `docs/source/examples.md` (auto-generated standalone Sphinx page),
+  alongside the existing `examples/README.md` (markered splice).
+  Both files stay in sync from one data source; regenerate via
+  `make examples-index`.
+
+### Changed
+
+- `make doctest` and the corresponding CI job now scan `docs/source/`
+  (was: `docs/`) for fenced code blocks. `pytest-markdown-docs` skip
+  pragmas (` ```python notest `) are preserved as-is.
+- `README.md` Docs section links now point at `docs/source/*` paths.
+  Docs badge + live URL deferred to Phase 3.
+
 ## [0.7.7] - 2026-05-15 — `--scan-consumer` false-positive triage (closes #76, #78, #79)
 
 ### Fixed

@@ -11,6 +11,11 @@ dist/
 *.egg-info/
 examples/smoke/artifacts/
 
+# Sphinx docs (Phase 1 of 3, v0.7.8) — build artifacts + autosummary stubs
+docs/build/
+docs/source/api/generated/
+.jupyter_cache/
+
 # Secrets — never commit
 .env
 .env.local

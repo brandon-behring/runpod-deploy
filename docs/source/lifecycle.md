@@ -29,7 +29,7 @@ runs multiple invocations from a bash/Make driver
 ```
 
 Each phase corresponds to a function in
-[`src/runpod_deploy/orchestrator.py`](../src/runpod_deploy/orchestrator.py)
+[`src/runpod_deploy/orchestrator.py`](https://github.com/brandon-behring/runpod-deploy/blob/main/src/runpod_deploy/orchestrator.py)
 and a YAML config section.
 
 ---
@@ -139,7 +139,7 @@ The "hot path" — five sub-phases that happen back-to-back inside the
   lines to a tempfile, rsyncs to `destination` with `--chmod=F<mode>`.
 - `source_file`: rsyncs the local file directly.
 
-Values are never logged. See [issue #2](../examples/) for the
+Values are never logged. See [issue #2](https://github.com/brandon-behring/runpod-deploy/issues/2) for the
 ephemeral-storage motivation.
 
 ### 5b. Push workspace

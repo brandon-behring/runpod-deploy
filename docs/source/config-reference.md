@@ -2,7 +2,7 @@
 
 The current YAML schema is `schema_version: 2`. The loader is strict:
 unknown fields are errors at parse time. See
-[`MIGRATION.md`](../MIGRATION.md) for the schema-versioning policy
+[`MIGRATION.md`](https://github.com/brandon-behring/runpod-deploy/blob/main/MIGRATION.md) for the schema-versioning policy
 and v1 → v2 migration history.
 
 ## `runpod-deploy run` invocation modes

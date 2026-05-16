@@ -1,4 +1,4 @@
-.PHONY: help install lint format test test-unit test-smoke type coverage ci build audit-docstrings examples-index doctest clean
+.PHONY: help install lint format test test-unit test-smoke type coverage ci build audit-docstrings examples-index doctest docs docs-serve docs-clean clean
 
 PYTHON := .venv/bin/python
 VENV := .venv
@@ -17,7 +17,10 @@ help:
 	@echo "  build       sdist + wheel (matches GitHub release workflow)"
 	@echo "  audit-docstrings  Check Raises: sections match actual raise sites"
 	@echo "  examples-index   Regenerate the auto-managed section of examples/README.md"
-	@echo "  doctest    Run pytest-markdown-docs against docs/ + README.md + examples/"
+	@echo "  doctest    Run pytest-markdown-docs against docs/source/ + README.md + examples/"
+	@echo "  docs        One-shot Sphinx HTML build (cd docs && make html)"
+	@echo "  docs-serve  Live-reload Sphinx server (sphinx-autobuild on docs/source)"
+	@echo "  docs-clean  Wipe docs/build/"
 	@echo "  clean       remove caches and build artifacts"
 
 install:
@@ -61,7 +64,16 @@ examples-index:
 	$(PYTHON) scripts/regen_examples_index.py
 
 doctest:
-	$(PYTHON) -m pytest --markdown-docs docs/ README.md examples/
+	$(PYTHON) -m pytest --markdown-docs docs/source/ README.md examples/
+
+docs:
+	cd docs && $(MAKE) html SPHINXBUILD="../$(PYTHON) -m sphinx"
+
+docs-serve:
+	cd docs && ../$(PYTHON) -m sphinx_autobuild source build/html
+
+docs-clean:
+	rm -rf docs/build/
 
 clean:
 	rm -rf build dist *.egg-info

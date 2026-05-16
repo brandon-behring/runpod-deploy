@@ -30,8 +30,8 @@ without calling `runpodctl`, SSH, or rsync. For a real end-to-end deploy on a
 cheap GPU, see [`examples/smoke/README.md`](examples/smoke/README.md) — it
 walks through the per-host setup (SSH key registration, rsync version) once.
 
-For new consumers, [`docs/quickstart.md`](docs/quickstart.md) is the 5-minute
-onboarding walkthrough, and [`docs/lifecycle.md`](docs/lifecycle.md) explains
+For new consumers, [`docs/source/quickstart.md`](docs/source/quickstart.md) is the 5-minute
+onboarding walkthrough, and [`docs/source/lifecycle.md`](docs/source/lifecycle.md) explains
 what happens at each phase of a `runpod-deploy run`.
 
 **Optional**: shell tab completion. Install via the `[completion]` extra and
@@ -106,8 +106,8 @@ schema version after at least two projects need the same extension point.
 
 ## Docs
 
-- [Config reference](docs/config-reference.md)
-- [RunPod gotchas](docs/runpod-gotchas.md)
-- [Extending guide](docs/extending.md)
-- [V3 migration guide](docs/migration-v3.md)
+- [Config reference](docs/source/config-reference.md)
+- [RunPod gotchas](docs/source/runpod-gotchas.md)
+- [Extending guide](docs/source/extending.md)
+- [V3 migration guide](docs/source/migration-v3.md)
 - [Coding standards](STYLE.md)

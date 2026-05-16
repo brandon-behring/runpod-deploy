@@ -1,7 +1,7 @@
 # Release workflow
 
 `runpod-deploy` ships to PyPI via a tag-triggered GitHub Actions
-workflow at [`.github/workflows/release.yml`](../.github/workflows/release.yml).
+workflow at [`.github/workflows/release.yml`](https://github.com/brandon-behring/runpod-deploy/blob/main/.github/workflows/release.yml).
 The flow uses **PyPI Trusted Publishing** (OIDC) so no API tokens
 live in repo secrets.
 
