@@ -52,9 +52,9 @@ artifacts:
     remote_path: /workspace/demo.log
     local_path: "{run_dir}"
     required: false
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
 
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
@@ -64,7 +64,8 @@ stop:
     assert "rsync-push:repo" in caplog.text
     assert "ssh-detached" in caplog.text
     assert "dry-run" in caplog.text
-    assert "runpodctl pod stop" in caplog.text
+    # New default lifecycle.on_success == "delete" — releases volume disk.
+    assert "runpodctl pod delete" in caplog.text
 
 
 @pytest.mark.smoke
@@ -117,9 +118,9 @@ artifacts:
     remote_path: /workspace/demo.log
     local_path: "{run_dir}"
     required: false
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
 
     run_job(
@@ -189,9 +190,9 @@ run:
   body: |
     echo "[demo] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
     log = caplog.text
@@ -239,9 +240,9 @@ run:
   body: |
     echo "[demo] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
     assert "uv python install" not in caplog.text
@@ -283,9 +284,9 @@ run:
   body: |
     echo "[demo] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
 
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
@@ -339,9 +340,9 @@ run:
   body: |
     echo "[demo] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(
         load_job_spec(config),
@@ -399,9 +400,9 @@ run:
   body: |
     echo "[demo] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
     log = caplog.text

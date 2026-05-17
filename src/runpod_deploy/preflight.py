@@ -16,8 +16,11 @@ from runpod_deploy.config import DEFAULT_STAGING_EXCLUDES, JobContext, RunpodJob
 from runpod_deploy.provider import run_json
 
 __all__ = [
+    "DatacenterInventory",
+    "InventoryReport",
     "check_gpu_availability",
     "fetch_datacenter_payload",
+    "report_gpu_inventory",
     "scan_consumer_pyproject",
     "scan_staged_payloads_for_absolute_paths",
 ]
@@ -58,6 +61,49 @@ class _InstallExtraSet:
     has_uv_sync: bool
     all_extras: bool
     named_extras: frozenset[str]
+
+
+@dataclass(frozen=True, slots=True)
+class DatacenterInventory:
+    """Per-datacenter snapshot of GPU stock vs. a configured gpu_order.
+
+    Built by intersecting the configured ``pod.gpu_order`` with the live
+    ``gpuAvailability`` array returned by ``runpodctl datacenter list``
+    for one datacenter id.
+
+    Attributes mirror the four states a configured GPU can be in for one
+    DC, plus a fifth "widening hint" listing GPUs the DC has stocked but
+    the config does not request.
+    """
+
+    datacenter_id: str
+    configured_available: tuple[str, ...]
+    configured_low_stock: tuple[str, ...]
+    configured_stockout: tuple[str, ...]
+    configured_unknown: tuple[str, ...]
+    other_available: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryReport:
+    """Aggregated GPU-stock snapshot across all configured datacenters.
+
+    Used by ``runpod-deploy gpu-inventory`` to answer the question
+    "will any configured GPU provision right now?" without raising.
+    """
+
+    gpu_order: tuple[str, ...]
+    datacenters: tuple[DatacenterInventory, ...]
+
+    @property
+    def any_stocked(self) -> bool:
+        """Whether at least one configured GPU is available in any DC.
+
+        Mirrors the semantics of ``check_gpu_availability``: when this is
+        False, a real ``runpod-deploy run`` would exhaust failover and
+        fail with a stock-out diagnostic.
+        """
+        return any(dc.configured_available or dc.configured_low_stock for dc in self.datacenters)
 
 
 def fetch_datacenter_payload(datacenter_id: str) -> Mapping[str, Any]:
@@ -133,6 +179,64 @@ def _check_one_datacenter(gpu_order: tuple[str, ...], dc_id: str) -> bool:
     if all(by_id.get(name, "").lower() == "low" for name in available):
         logger.warning(f"[gpu:{dc_id}] all configured GPUs are Low stock — provisioning may fail")
     return True
+
+
+def report_gpu_inventory(ctx: JobContext) -> InventoryReport:
+    """Build a structured stock report without raising on empty intersection.
+
+    Sibling to ``check_gpu_availability``: same probe, different return
+    shape. Where ``check_gpu_availability`` raises on cluster-wide
+    stock-out (used by ``runpod-deploy validate --check-availability``),
+    this returns an ``InventoryReport`` callers can inspect, print, or
+    feed into a non-zero exit (used by ``runpod-deploy gpu-inventory``).
+    """
+    spec = ctx.spec
+    per_dc = tuple(
+        _inventory_one_datacenter(spec.pod.gpu_order, dc_id) for dc_id in spec.pod.datacenters
+    )
+    return InventoryReport(gpu_order=spec.pod.gpu_order, datacenters=per_dc)
+
+
+def _inventory_one_datacenter(gpu_order: tuple[str, ...], dc_id: str) -> DatacenterInventory:
+    """Build a structured per-DC inventory snapshot from live RunPod stock."""
+    entry = fetch_datacenter_payload(dc_id)
+    availability = entry.get("gpuAvailability") or []
+    if not isinstance(availability, list):
+        raise RuntimeError(
+            f"datacenter {dc_id!r} gpuAvailability is "
+            f"{type(availability).__name__}, expected list"
+        )
+    by_id: dict[str, str] = {}
+    for item in availability:
+        if isinstance(item, dict):
+            name = str(item.get("gpuId") or "")
+            status = str(item.get("stockStatus") or "").strip().lower()
+            if name:
+                by_id[name] = status
+    configured_set = set(gpu_order)
+    configured_available = tuple(
+        g for g in gpu_order if by_id.get(g, "") in _AVAILABLE_STOCK and by_id[g] != "low"
+    )
+    configured_low_stock = tuple(g for g in gpu_order if by_id.get(g, "") == "low")
+    configured_stockout = tuple(
+        g for g in gpu_order if g in by_id and by_id[g] in _UNAVAILABLE_STOCK
+    )
+    configured_unknown = tuple(g for g in gpu_order if g not in by_id)
+    other_available = tuple(
+        sorted(
+            name
+            for name, status in by_id.items()
+            if name not in configured_set and status in _AVAILABLE_STOCK
+        )
+    )
+    return DatacenterInventory(
+        datacenter_id=dc_id,
+        configured_available=configured_available,
+        configured_low_stock=configured_low_stock,
+        configured_stockout=configured_stockout,
+        configured_unknown=configured_unknown,
+        other_available=other_available,
+    )
 
 
 def scan_consumer_pyproject(ctx: JobContext) -> None:

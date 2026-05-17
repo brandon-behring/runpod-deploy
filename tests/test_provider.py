@@ -478,3 +478,71 @@ run:
     assert "--spot" not in argv
     assert "--min-vcpu-count" not in argv
     assert "--min-memory-in-gb" not in argv
+
+
+@pytest.mark.unit
+def test_pod_create_defaults_to_spec_cloud_type(tmp_path: Path) -> None:
+    """Without an override, --cloud-type= reflects spec.pod.cloud_type."""
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+pod:
+  image: image
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+  cloud_type: SECURE
+storage:
+  mode: ephemeral
+  volume_gb: 100
+run:
+  script_path: /workspace/run.sh
+  log_path: /workspace/run.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    ctx = build_job_context(load_job_spec(config), config)
+
+    argv = _build_pod_create_argv(ctx, volume_id=None, gpu_id="gpu-a", datacenter_id="EU-RO-1")
+
+    assert "--cloud-type=SECURE" in argv
+    assert "--cloud-type=COMMUNITY" not in argv
+
+
+@pytest.mark.unit
+def test_pod_create_uses_cloud_type_override_when_set(tmp_path: Path) -> None:
+    """cloud_type_override replaces spec.pod.cloud_type in the --cloud-type= flag.
+
+    Used by the orchestrator's --fallback-cloud-type retry path after the
+    primary cloud_type hits stock-out.
+    """
+    config = tmp_path / "job.yaml"
+    config.write_text("""
+schema_version: 2
+name: demo
+pod:
+  image: image
+  datacenters: [EU-RO-1]
+  gpu_order: ["gpu-a"]
+  cloud_type: SECURE
+storage:
+  mode: ephemeral
+  volume_gb: 100
+run:
+  script_path: /workspace/run.sh
+  log_path: /workspace/run.log
+  success_marker: DONE
+  body: echo DONE
+""")
+    ctx = build_job_context(load_job_spec(config), config)
+
+    argv = _build_pod_create_argv(
+        ctx,
+        volume_id=None,
+        gpu_id="gpu-a",
+        datacenter_id="EU-RO-1",
+        cloud_type_override="COMMUNITY",
+    )
+
+    assert "--cloud-type=COMMUNITY" in argv
+    assert "--cloud-type=SECURE" not in argv
