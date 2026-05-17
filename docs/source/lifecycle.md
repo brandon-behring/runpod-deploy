@@ -79,11 +79,19 @@ What runs:
   walking failover events through `on_failover` for telemetry capture.
   Honors `--max-gpu-price <float>` via the GraphQL prices fetched from
   `pricing.fetch_gpu_prices`.
-- `provider.provision_pod(ctx, volume_id, gpu_id, datacenter_id, dry_run)`:
+- `provider.provision_pod(ctx, volume_id, gpu_id, datacenter_id, dry_run, ssh_ready_timeout_sec)`:
   builds the `runpodctl pod create` argv via
   `provider._build_pod_create_argv` (gates `--spot` / `--min-vcpu-count` /
-  `--min-memory-in-gb` via the v0.3.2 feature-detection probe) and
-  shells out. Returns a `PodConnection` with `host`, `port`, `pod_id`.
+  `--min-memory-in-gb` via the v0.3.2 feature-detection probe), shells
+  out, then polls `runpodctl pod get` until the pod publishes a usable
+  `ssh.{ip, port}`. Returns a `PodConnection` with `host`, `port`,
+  `pod_id`. Bounded by `budget.ssh_ready_timeout_sec` (default 900 s;
+  also overridable per-run via `runpod-deploy run --ssh-ready-timeout-sec
+  <N>`). On timeout, the orphaned pod is deleted before re-raising
+  (see [`troubleshooting.md`](troubleshooting.md) for the failure
+  workflow). Waits longer than 60 s emit a periodic INFO heartbeat
+  with `status`, `ssh.error`, and `uptimeSeconds` so operators don't
+  stare at a silent terminal.
 
 The pod's `--name` is set to `ctx.run_id` — which is *rendered*
 (v0.4.0 PR-C), so a YAML with `name: demo-{seed}` produces
@@ -211,15 +219,129 @@ run script started — i.e., not preflight-failure).
 
 ---
 
-## 7. Stop pod
+## 7. Lifecycle action (cleanup)
 
-`stop_pod(pod.pod_id, dry_run, state_file)` is called based on
-`stop.on_success` / `stop.on_failure`:
-- If true → `runpodctl pod stop <pod_id>`. Pod is terminated; bills
-  for the runtime so far.
-- If false → log a WARNING (`pod preserved`) so the operator can
-  SSH in for post-mortem. Common pattern for failure cases during
-  development.
+After the run completes (or fails), the orchestrator calls
+`cleanup_pod(pod_id, action, dry_run, state_file, volume_in_gb)` with
+one of four actions, controlled by the YAML `lifecycle:` block:
+
+```yaml
+lifecycle:
+  on_success: delete    # default — release volume disk on success
+  on_failure: stop      # default — preserve for SSH forensics
+```
+
+Action semantics:
+
+| action      | runpodctl call         | compute billing | volume disk billing | state file | next run |
+| ----------- | ---------------------- | --------------- | ------------------- | --- | --- |
+| `preserve`  | _(none)_               | continues at GPU rate | continues at volume rate | preserved | — |
+| `stop`      | `pod stop <id>`        | stops           | **continues at ~$0.10/GB·month indefinitely** | preserved | — |
+| `delete`    | `pod delete <id>`      | stops           | stops               | unlinked | fresh pod |
+| `recycle`   | `pod stop <id>`        | stops           | continues at ~$0.10/GB·month (kept on purpose) | preserved | **resumes paused pod** via `pod start <id>` |
+
+`recycle` is the success-path-only "warm cache" action: the pod is
+paused (same wire call as `stop`) AND the state-file is preserved so
+the next `runpod-deploy run` with the same `state_file:` finds the
+paused pod, validates image/GPU/datacenter compatibility, and calls
+`runpodctl pod start <id>` instead of `pod create`. Saves the
+image-pull + cold-boot cost per recurring run (typically 3–5 min).
+See [`recipes/recycle-pod-for-fast-iteration.md`](recipes/recycle-pod-for-fast-iteration.md).
+
+The defaults `on_success: delete` and `on_failure: stop` encode the
+operational discipline that prevents storage leaks while preserving
+forensic access:
+
+- **Success path** → `delete` releases the volume disk. The run is
+  done, all artifacts have been pulled, the manifest is written.
+  There is nothing left worth paying storage for.
+- **Failure path** → `stop` keeps the pod paused so the operator can
+  `runpodctl pod start <id>` later and SSH in for post-mortem. The
+  orchestrator emits a multi-line WARNING with the exact release
+  command so the operator never has to remember the cleanup syntax:
+
+  ```
+  [lifecycle] pod 'abc123' stopped for forensics.
+    Volume disk (50 GB) continues billing at ~$0.17/day (~$5.00/mo) until released.
+    When done investigating, release with:
+        runpod-deploy cleanup --state-file ~/.runpod-deploy-current --mode delete
+    Or audit all stale pods:
+        runpod-deploy ls-stale
+  ```
+
+If you don't want SSH-forensics for failed runs, set
+`lifecycle: {on_failure: delete}` to release disk on every run
+regardless of outcome.
+
+---
+
+## 7b. Cost discipline: cleaning up after forensics
+
+The `on_failure: stop` default trades a small ongoing storage cost
+(~$0.17/day per 50 GB pod) for the option to SSH in after a failure.
+This trade-off is only sustainable if you *actually* clean up the
+preserved pods. **Stopped pods continue billing the volume disk
+indefinitely** at RunPod's $0.10/GB·month preserved-volume rate.
+
+### Why this section exists
+
+On 2026-05-17, this repo had **76 EXITED pods totaling 3,930 GB** —
+nothing actively running, but **$1.10/hr (~$26/day, ~$393/month)** of
+idle storage burn. The leak existed because `stop_pod` only paused
+pods (never deleted them) and operators assumed "stop" meant
+"terminated". After releasing those 76 pods, idle burn dropped 110×
+to $0.01/hr. The current schema (`lifecycle.on_success: delete` by
+default + the failure-path WARNING + `ls-stale` audit + `cleanup
+--all-stopped` bulk-release) is the structural fix that prevents the
+same gap reopening.
+
+### The forensics-then-cleanup workflow
+
+After a failed run that preserved a pod:
+
+1. **Audit**: `runpod-deploy ls-stale` lists every EXITED pod on the
+   account with its volume size and estimated daily/monthly cost,
+   plus a TOTAL footer. Read-only; safe to run anytime.
+
+2. **Investigate**: inspect the pulled manifest in
+   `artifacts/runpod/<ts>/runpod_pull_manifest.json` for most root-cause
+   analysis (most failure modes are visible in the captured logs and
+   telemetry without needing SSH). If you do need SSH:
+   `runpodctl pod start <id>`, then `runpodctl pod ssh <id>`.
+
+3. **Release** (single pod):
+   ```bash
+   runpod-deploy cleanup --state-file <path> --mode delete
+   ```
+   The state file path is logged by the per-run WARNING. The default
+   `--mode` is `delete` — you almost always want to release disk
+   after forensics. `--mode stop` re-pauses (rarely useful); `--mode
+   preserve` is a no-op.
+
+4. **Release** (bulk, after a sweep of failed runs):
+   ```bash
+   runpod-deploy cleanup --all-stopped         # interactive y/N prompt
+   runpod-deploy cleanup --all-stopped --yes   # non-interactive
+   ```
+   Equivalent to `runpodctl pod list -a --status EXITED -o json | jq
+   -r '.[].id' | xargs -I{} runpodctl pod delete {}` but ships in the
+   SDK with failure collection (one bad delete doesn't abort the
+   rest).
+
+### Recommended hygiene
+
+- Add `runpod-deploy ls-stale` to a weekly cron / CI job to detect
+  drift before it becomes a leak. See
+  [`recipes/stale-pod-audit.md`](recipes/stale-pod-audit.md).
+- When iterating on a workflow that fails repeatedly during
+  development, set `lifecycle: {on_failure: delete}` in that config
+  so failed runs don't accumulate. Revert to `on_failure: stop` only
+  when you genuinely want SSH access on failure.
+- For workflows where the staging payload is the slow part of every
+  run (large repos, repeated rsyncs), consider switching
+  `storage.mode: network_volume` so the volume persists across pods
+  and `rsync` is incremental. See
+  [`recipes/payload-reuse-via-network-volume.md`](recipes/payload-reuse-via-network-volume.md).
 
 ---
 

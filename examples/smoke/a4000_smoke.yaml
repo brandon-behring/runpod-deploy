@@ -71,6 +71,6 @@ artifacts:
     required: false
     delete: false
 
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop

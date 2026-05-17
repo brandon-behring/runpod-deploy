@@ -80,10 +80,42 @@ artifacts:                            # optional list; pulled after the run
     local_path: "{project_root}/results/"
     required: true
 
-stop:                                 # optional block (defaults: both true)
-  on_success: true
-  on_failure: true
+lifecycle:                            # optional; defaults shown below
+  on_success: delete                  # release volume disk on success
+  on_failure: stop                    # preserve paused pod for SSH forensics
 ```
+
+### `lifecycle:` actions
+
+`on_success` accepts one of four strings; `on_failure` accepts the
+first three (`recycle` on the failure path is rejected at validation):
+
+- `delete` — call `runpodctl pod delete`. Tears down both compute
+  and volume disk. **Default for `on_success`.** Use this on the
+  failure path too if you don't need SSH forensics.
+- `stop` — call `runpodctl pod stop`. Pauses compute, but
+  **volume disk continues billing at ~$0.10/GB·month indefinitely**
+  until released. **Default for `on_failure`.** Pair with
+  `runpod-deploy cleanup --state-file <path> --mode delete` once
+  forensics is complete. See
+  [`lifecycle.md` §7b "Cost discipline"](lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics).
+- `preserve` — no-op. Pod keeps running and bills full GPU rate.
+  Rare; useful only if you intend to SSH in immediately after the
+  job completes.
+- `recycle` — **success-path only.** Same wire call as `stop` (pauses
+  the pod), but the state-file is intentionally preserved so the next
+  `runpod-deploy run` with the same `state_file:` finds the paused
+  pod and resumes it via `runpodctl pod start <id>` instead of
+  provisioning a fresh one. Saves image-pull + cold-boot cost per
+  recurring run. Drift detection (image/GPU/datacenter mismatch)
+  falls through to fresh-create with a WARNING. Bypass for one
+  invocation with `runpod-deploy run --force-fresh`. See
+  [`recipes/recycle-pod-for-fast-iteration.md`](recipes/recycle-pod-for-fast-iteration.md).
+
+The legacy bool form (`stop: {on_success: true, on_failure: true}`)
+is still accepted with a deprecation warning. See
+[`migration-v3.md`](migration-v3.md) for the mapping and migration
+path.
 
 ## Required top-level fields
 
@@ -107,6 +139,30 @@ Common optional fields:
 - `artifacts`
 - `stop`
 - `variables`
+
+## `budget:` block — runtime + cost ceilings
+
+```yaml
+budget:
+  cost_cap_usd: 10.0           # default — pod is stopped when projected $/runtime reaches the cap
+  assumed_hourly_rate_usd: 1.65 # default — used in cost projections + budget eta
+  max_runtime_minutes: null     # default — uncapped; derived from cost_cap_usd / hourly_rate
+  poll_interval_sec: 60         # default — cadence for the run-monitor tail loop
+  ssh_ready_timeout_sec: 900    # default — deadline for SSH info to populate post `pod create`
+```
+
+`ssh_ready_timeout_sec` is the wait between `runpodctl pod create`
+returning a pod_id and the pod's SSH proxy publishing a usable
+`{host, port}`. The default 900 s covers cold-pull of large
+pytorch/cudnn-devel images (~6–12 GB) on first-touch GPUs. For
+one-off bumps without editing YAML, use
+`runpod-deploy run --ssh-ready-timeout-sec <N>`. If the wait
+exceeds 60 s, an INFO heartbeat with `status`, `ssh.error`, and
+`uptimeSeconds` is emitted every 30 s. On timeout, the orchestrator
+deletes the orphaned pod before raising (see
+[`lifecycle.md`](lifecycle.md) and
+[`troubleshooting.md`](troubleshooting.md) for the failure
+workflow).
 
 ## Template variables
 
@@ -177,6 +233,47 @@ preflight:
 ```
 
 `with_env: true` prepends `remote_env.source_files` and `remote_env.exports`.
+
+### Recommended `remote_env.exports` for uv-driven pods on /workspace
+
+If your `preflight:` or `run.body` runs `uv sync` and your `storage.volume_mount`
+is `/workspace` (RunPod's distributed FUSE filesystem), pin uv's write-heavy
+working directories to the pod's overlay disk and export `UV_LINK_MODE=copy`.
+On FUSE, three distinct uv/HF-Trainer code paths can stall on MooseFS
+`F_SETLKW` exclusive-lock acquisition (uv git resolution, uv install-phase
+atomic writes, and HF Trainer atomic checkpoint save) — see
+[troubleshooting.md "uv sync hangs silently"](troubleshooting.md#uv-sync-hangs-silently-with-venv-partially-populated)
++ the two follow-up sections for failure signatures.
+
+```yaml
+remote_env:
+  source_files:
+    - /workspace/secrets/env       # if you stage secrets via the secrets: block
+  exports:
+    HF_HOME: /workspace/hf_cache              # FUSE OK — HF caches are read-mostly
+    HUGGINGFACE_HUB_CACHE: /workspace/hf_cache
+    UV_CACHE_DIR: /root/uv_cache              # overlay disk, NOT FUSE — git ops + atomic writes
+    UV_PROJECT_ENVIRONMENT: /root/.venv       # overlay disk, NOT FUSE — install atomic writes
+    UV_LINK_MODE: copy                         # defense-in-depth for residual /workspace touchpoints
+```
+
+`/root` is the container's overlay disk (verify with `df -hT /root` — type
+`overlay`, NOT `fuse`). POSIX locks work normally there. The uv cache and
+venv are ephemeral anyway (re-populated each fire); putting them on `/root`
+sacrifices nothing.
+
+**If your training framework writes checkpoints** (HF Trainer's `save_strategy`,
+PyTorch Lightning's `ModelCheckpoint`, etc.) and the default `output_dir` is
+under `/workspace/`, the atomic-save protocol can stall on the same FUSE bug.
+Pin checkpoint `output_dir` to `/root/checkpoints/` and rsync back to the
+volume as a `run.body` trailer for orchestrator artifact pull. See
+[troubleshooting.md "HF Trainer checkpoint save hangs"](troubleshooting.md#hf-trainer-checkpoint-save-hangs-on-fuse-backed-output_dir).
+
+For genuinely separate network-stall symptoms (single wheel download stuck
+mid-stream rather than a stalled `stat()`/`flock()`), also add
+`UV_HTTP_TIMEOUT: "120"` (defense against Fastly/CDN HTTP stalls) and
+optionally `UV_CONCURRENT_DOWNLOADS: "4"` (caps concurrency; default 50
+amplifies head-of-line blocking on stalled sockets).
 
 ## Pod field: `python_version` (optional, default: unset)
 

@@ -112,7 +112,7 @@ Re-exported from `__init__.py`:
 | `validate_local_paths(ctx)` | Verifies each `local.required_paths` entry exists. Raises `FileNotFoundError` with the missing list. |
 | `run_job(spec, *, config_path, dry_run=False, offline_dry_run=False, gpu_id_override=None, datacenter_id_override=None, max_gpu_price_usd=None, cli_variables=None, print_run_dir=False)` | Full lifecycle (provision → stage → preflight → run → pull → stop → manifest). All side-effecting calls. Raises on failure (after the `finally`-block manifest write). |
 | `RunpodJobSpec`, `JobContext`, `PodSpec`, `StorageSpec`, `RunSpec`, ... (frozen dataclasses) | Type-hint / pattern-match targets. Constructed via parsers; consumers should treat as read-only. |
-| `select_gpu_across_datacenters`, `provision_pod`, `stop_pod` | Lower-level orchestration primitives (rarely needed; the orchestrator wraps them). |
+| `select_gpu_across_datacenters`, `provision_pod`, `cleanup_pod`, `list_stale_pods`, `bulk_delete_pods` | Lower-level orchestration primitives (rarely needed; the orchestrator wraps them). |
 | `pricing.fetch_gpu_prices(force_refresh=False)` | GraphQL pricing fetch. Returns `dict[str, GpuPrice]`. |
 
 ### Pattern: composing with a Python driver

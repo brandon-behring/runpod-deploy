@@ -42,6 +42,48 @@ absence but can't synthesize the underlying feature.
 
 ---
 
+### `RuntimeError: pod <id> did not become SSH-ready`
+
+**Symptom**: `runpodctl pod create` succeeds, the pod transitions to
+`RUNNING`, but the SSH proxy never publishes a host/port within the
+deadline. The trimmed error message looks like:
+
+```
+RuntimeError: pod abc123 did not become SSH-ready in 900s;
+  last={'desiredStatus': 'RUNNING', 'ssh': {'error': 'pod not ready', 'status': 'RUNNING'},
+        'uptimeSeconds': 0}
+```
+
+**Diagnosis**: image pull/extract on a cold host (no local cache)
+takes longer than `budget.ssh_ready_timeout_sec`. Common with
+cudnn-devel pytorch images (~6–12 GB) in datacenters or on GPU
+classes you don't use often.
+
+If the wait was longer than 60 s, you should also see periodic
+heartbeat INFO logs like
+`[pod] abc123 waiting for SSH; T=120s status='RUNNING' ssh.error='pod not ready' uptimeSeconds=0` —
+that confirms the diagnosis is "still pulling, not stuck".
+
+**Fix (persistent)** — bump the timeout in YAML:
+
+```yaml
+budget:
+  ssh_ready_timeout_sec: 1500   # 25 min; default is 900
+```
+
+**Fix (one-off debugging)** — use the CLI flag without editing YAML:
+
+```bash
+runpod-deploy run --config foo.yaml --ssh-ready-timeout-sec 1500
+```
+
+**Safety**: when the timeout expires, the orchestrator deletes the
+orphaned pod before re-raising (see PR #89 / `cleanup_pod` orphan
+hook). The longer timeout does not leak billing — it just fails the
+run later.
+
+---
+
 ### `no configured GPU is available` post-provision
 
 **Symptom**: the orchestrator emits
@@ -251,6 +293,146 @@ preflight step exits non-zero. The run aborts before user preflight.
 
 ---
 
+### `uv sync` hangs silently with `.venv` partially populated
+
+**Symptom**: pod-side `uv sync` hangs after starting wheel installation.
+`ps` shows the uv PID alive at 0% CPU; `/workspace/.venv` is frozen at
+a few MB (not growing); `lsof -p <uv_pid>` reveals open file descriptors
+under `/workspace/uv_cache/.tmp*` unpack dirs. No error message; no
+stack trace; preflight times out after the configured `timeout_sec`
+and the orchestrator aborts.
+
+**Diagnosis**: RunPod mounts `/workspace` as a distributed FUSE
+filesystem (confirm with `df -hT /workspace` — returns
+`mfs#<dc>.runpod.net:9421 type fuse`). uv's default
+`--link-mode=hardlink` triggers `Stale file handle (os error 116)`
+errors when installing many wheels onto this FS in tight loops. uv
+either retries silently or stalls on a stat() call. The hang is
+indistinguishable from a slow network read in `ps`/`lsof`.
+
+**Fix**: add `UV_LINK_MODE=copy` to your `remote_env.exports`:
+
+```yaml
+remote_env:
+  exports:
+    UV_LINK_MODE: copy    # avoid stale-file-handle on FUSE-mounted /workspace
+```
+
+uv falls back to full-file copy mode (adds ~10-30s to a typical venv
+populate; eliminates the hardlink hang).
+
+**If `UV_LINK_MODE=copy` alone is insufficient**, two FUSE-related failure
+modes can hit before or after the wheel-install phase that copy-mode does
+NOT address:
+
+1. `uv sync` stalled in `git reset --hard` during resolution (see
+   ["`uv sync` hangs in `git reset --hard`"](#uv-sync-hangs-in-git-reset---hard-during-resolution-phase)
+   below) — fix: pin `UV_CACHE_DIR` to `/root/uv_cache` (overlay disk).
+2. HF Trainer checkpoint save stalled (see
+   ["HF Trainer checkpoint save hangs"](#hf-trainer-checkpoint-save-hangs-on-fuse-backed-output_dir)
+   below) — fix: put `output_dir` on `/root` and rsync checkpoints back
+   in your `run.body` trailer.
+
+Both fixes pin write-heavy directories to the overlay disk (where POSIX
+locks work normally) rather than fighting FUSE's F_SETLKW behavior. See
+[`uv#17801`](https://github.com/astral-sh/uv/issues/17801),
+[MooseFS discussion #380](https://github.com/moosefs/moosefs/discussions/380),
+and the [Linux kernel `request_wait_answer` hang patch (2025-12-23)](https://lkml.org/lkml/2025/12/23/264)
+for upstream context.
+
+For genuinely separate network-stall symptoms (single wheel download stuck
+mid-stream rather than a stalled `stat()` / `flock()`), also add
+`UV_HTTP_TIMEOUT=120` (bounds any single HTTP read at 120s) and optionally
+`UV_CONCURRENT_DOWNLOADS=4` (caps concurrent downloads; default 50
+amplifies head-of-line blocking on stalled sockets).
+
+---
+
+### `uv sync` hangs in `git reset --hard` during resolution phase
+
+**Symptom**: `uv sync` hangs BEFORE installing wheels, while resolving
+`git+https://...` dependencies. `ps` shows two stuck processes: a `git
+reset --hard <sha>` PID in `D` (uninterruptible) state with WCHAN
+`request_wait_answer`, and the parent `uv sync` PID in `futex_wait_queue`.
+`lsof` shows the git PID holding
+`/workspace/uv_cache/git-v0/checkouts/.../.git/index.lock`. uv has not
+yet started populating `.venv/` — the hang is during resolution, not
+install.
+
+**Diagnosis**: with `UV_CACHE_DIR: /workspace/uv_cache`, uv clones
+`git+https://...` deps (e.g. consumer-side `[project.optional-dependencies]
+dev` that references your own toolkits via `git+https`) into the
+FUSE-backed cache. Each clone runs `git reset --hard <sha>` to materialize
+the pinned revision; `git` acquires an `flock()` exclusive lock on
+`.git/index.lock` via `F_SETLKW`. MooseFS's F_SETLKW path is unreliable
+on FUSE (see [MooseFS discussion #380](https://github.com/moosefs/moosefs/discussions/380))
+and the syscall stalls indefinitely in `request_wait_answer`. This happens
+BEFORE the wheel-install phase, so `UV_LINK_MODE=copy` (which only affects
+the install-phase hardlink path) does not prevent it.
+
+**Fix**: move `UV_CACHE_DIR` off `/workspace` onto the pod's overlay disk:
+
+```yaml
+remote_env:
+  exports:
+    UV_CACHE_DIR: /root/uv_cache        # overlay disk; not FUSE
+    UV_LINK_MODE: copy                   # still good as defense-in-depth
+```
+
+`/root` is the container's overlay disk (verify with `df -hT /root` —
+type `overlay`, NOT `fuse`). POSIX locks work normally there. uv_cache
+is ephemeral anyway (re-populated each fire); putting it on `/root`
+sacrifices nothing.
+
+---
+
+### HF Trainer checkpoint save hangs on FUSE-backed `output_dir`
+
+**Symptom**: Hugging Face Trainer completes a training step successfully,
+then hangs in `model.save_pretrained()` or `Trainer._save()`. tqdm bar
+shows `Writing model shards: 0%|`. The main `.safetensors` shard may
+write successfully (large file, ~300 MB), but subsequent small files
+(`optimizer.pt`, `scheduler.pt`, `tokenizer.json`, `trainer_state.json`,
+`config.json`) never appear. `ps` shows the trainer PID alive at moderate
+CPU (50-90%) with one thread on WCHAN `request_wait_answer`. The hang
+typically resolves within 10 minutes (FUSE eventually grants the lock)
+or times out the run.
+
+**Diagnosis**: same MooseFS F_SETLKW class as the git-resolution and
+install-phase hangs, but here the lock holder is HF Trainer's atomic-save
+protocol. `Trainer._save()` writes each checkpoint file to a tempname
+then atomically renames into place, with intermediate `flock()` / POSIX
+locks for crash-consistency. On FUSE-backed `output_dir`, the lock
+acquisition stalls.
+
+**Fix**: keep checkpoint `output_dir` on the pod's overlay disk too. Two
+options depending on whether you want to ship checkpoints back:
+
+1. **Train on `/root`, rsync checkpoints back as a `run.body` trailer** —
+   set the Trainer's `output_dir` (configurable via your training script
+   or `TrainingArguments.output_dir`) to e.g. `/root/checkpoints/`, then
+   in `run.body` after the training command:
+
+   ```bash
+   uv run python scripts/train.py --output-dir /root/checkpoints
+   rsync -az /root/checkpoints/ /workspace/<artifact_dir>/
+   ```
+
+   Best of both worlds: locks work during training; final checkpoints
+   land on the volume for orchestrator artifact pull.
+
+2. **Disable per-epoch checkpoint save entirely** — set `save_strategy:
+   "no"` in your `TrainingArguments`. Only viable if predictions parquets
+   are your real analysis input and you don't need re-runnable
+   checkpoints.
+
+Predictions parquets written via custom callbacks usually don't trigger
+this because (a) they're written as a single `pq.write_table()` call
+rather than a multi-file atomic-rename dance, and (b) they're small
+enough that any FUSE-write race resolves before the next epoch starts.
+
+---
+
 ## Run failures
 
 ### Secrets unavailable on ephemeral pods
@@ -451,6 +633,98 @@ runpod-deploy ls-runs --limit 20
 
 Pulled-back-to-local table of recent run-dir manifests with
 pod_id, GPU, datacenter, wall time, failure flag, estimated cost.
+
+---
+
+## Cost / cleanup
+
+These are the symptoms of the 2026-05-17 leak — and how to recognize
+recurrences early.
+
+### Stale paused pods are billing indefinitely
+
+**Symptom**: `runpodctl user` shows `currentSpendPerHr > 0` despite
+no apparent activity. `runpodctl pod list` (no `-a`) returns `[]` (no
+RUNNING pods), but `runpodctl pod list -a` shows many EXITED entries.
+
+**Diagnosis**: stopped pods retain their volume disk at **~$0.10/GB·month**
+indefinitely. `runpodctl pod stop` only pauses compute — it does
+*not* release storage. The leak is silent: no GPU bill, just slow
+accumulation on the volume side.
+
+**Fix**:
+
+```bash
+# Audit (read-only): inventory + estimated daily cost
+runpod-deploy ls-stale
+
+# Release every paused pod (irreversible)
+runpod-deploy cleanup --all-stopped --yes
+```
+
+> **Backstory**: On 2026-05-17 this repo's account had 76 EXITED pods
+> totaling 3,930 GB ≈ **$26/day idle burn**. Account balance was 12 h
+> from negative when caught. Read [`lifecycle.md` §7b](lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics)
+> for the post-mortem and the hygiene workflow.
+
+To prevent recurrence: the v0.9 schema defaults to `lifecycle.on_success: delete`,
+so successful runs release disk automatically. Failed runs still
+preserve a paused pod for SSH forensics (`on_failure: stop`); the
+orchestrator emits a multi-line WARNING with the exact release
+command so the operator is never expected to remember the cleanup
+syntax.
+
+---
+
+### My failed run preserved a pod and I want to release it
+
+**Symptom**: After a failed `runpod-deploy run`, you see a WARNING
+like:
+
+```
+[lifecycle] pod 'abc123' stopped for forensics.
+  Volume disk (50 GB) continues billing at ~$0.17/day (~$5.00/mo) until released.
+  When done investigating, release with:
+      runpod-deploy cleanup --state-file ~/.runpod-deploy-current --mode delete
+  Or audit all stale pods:
+      runpod-deploy ls-stale
+```
+
+**Diagnosis**: the run failed and the `on_failure: stop` default
+paused the pod for SSH forensics. You've finished investigating and
+want the volume disk back.
+
+**Fix**: copy the `runpod-deploy cleanup ...` command from the
+WARNING and run it. The default `--mode` is `delete` so the disk is
+released. The state file is unlinked on success.
+
+If you didn't actually need SSH forensics for this workflow, switch
+to `lifecycle: {on_failure: delete}` in the config so failed runs
+release disk automatically (skip the manual cleanup step).
+
+---
+
+### I want to keep payload state between runs (avoid re-uploading)
+
+**Symptom**: every `runpod-deploy run` re-pulls the Docker image
+(~2–5 min), re-runs `setup:` (apt install, uv venv), and re-rsyncs
+the staging payload (1–5 min for typical repos). Across a 100-job
+sweep that's hours of wall time.
+
+**Diagnosis**: with `storage.mode: ephemeral`, the volume is
+destroyed when the pod is destroyed. Every successful run with
+`lifecycle.on_success: delete` (the new default) starts over from a
+fresh image.
+
+**Fix**: switch the workflow to `storage.mode: network_volume` with
+a named, pre-created volume. The volume persists across pods; rsync
+becomes incremental (only changed bytes go over); image layer cache
+and uv venv survive in `/workspace`. See
+[`recipes/payload-reuse-via-network-volume.md`](recipes/payload-reuse-via-network-volume.md)
+for the step-by-step.
+
+Trade-off: a 100 GB network volume costs ~$7/month sitting idle;
+network volumes are pinned to one datacenter.
 
 ---
 

@@ -27,6 +27,7 @@ import logging
 
 from runpod_deploy.config import (
     DEFAULT_STAGING_EXCLUDES,
+    LIFECYCLE_ACTIONS,
     SCHEMA_VERSION,
     STORAGE_EPHEMERAL,
     STORAGE_NETWORK_VOLUME,
@@ -34,6 +35,8 @@ from runpod_deploy.config import (
     BudgetSpec,
     CommandSpec,
     JobContext,
+    LifecycleAction,
+    LifecyclePolicySpec,
     LocalSpec,
     PodSpec,
     RemoteEnvSpec,
@@ -42,7 +45,6 @@ from runpod_deploy.config import (
     RunSpec,
     SecretSpec,
     SshSpec,
-    StopPolicySpec,
     StorageSpec,
     TelemetrySpec,
     build_job_context,
@@ -52,20 +54,38 @@ from runpod_deploy.config import (
 from runpod_deploy.forensics import load_events, load_manifest, walk_run_dirs
 from runpod_deploy.metadata import capture_local_git, capture_payload_lockfile
 from runpod_deploy.orchestrator import run_job
-from runpod_deploy.pricing import GpuPrice, fetch_gpu_prices, select_price_for_pod
-from runpod_deploy.provider import PodConnection, resolve_volume, select_gpu_across_datacenters
+from runpod_deploy.pricing import (
+    VOLUME_STORAGE_USD_PER_GB_MONTH,
+    GpuPrice,
+    estimate_volume_storage_cost_usd_per_day,
+    fetch_gpu_prices,
+    select_price_for_pod,
+)
+from runpod_deploy.provider import (
+    PodConnection,
+    StalePod,
+    bulk_delete_pods,
+    cleanup_pod,
+    list_stale_pods,
+    resolve_volume,
+    select_gpu_across_datacenters,
+)
 from runpod_deploy.transport import RemoteRunError, RemoteRunner, rsync_argv
 
 __all__ = [
     "DEFAULT_STAGING_EXCLUDES",
+    "LIFECYCLE_ACTIONS",
     "SCHEMA_VERSION",
     "STORAGE_EPHEMERAL",
     "STORAGE_NETWORK_VOLUME",
+    "VOLUME_STORAGE_USD_PER_GB_MONTH",
     "ArtifactPullSpec",
     "BudgetSpec",
     "CommandSpec",
     "GpuPrice",
     "JobContext",
+    "LifecycleAction",
+    "LifecyclePolicySpec",
     "LocalSpec",
     "PodConnection",
     "PodSpec",
@@ -77,13 +97,17 @@ __all__ = [
     "RunpodJobSpec",
     "SecretSpec",
     "SshSpec",
-    "StopPolicySpec",
+    "StalePod",
     "StorageSpec",
     "TelemetrySpec",
     "build_job_context",
+    "bulk_delete_pods",
     "capture_local_git",
     "capture_payload_lockfile",
+    "cleanup_pod",
+    "estimate_volume_storage_cost_usd_per_day",
     "fetch_gpu_prices",
+    "list_stale_pods",
     "load_events",
     "load_job_spec",
     "load_manifest",
