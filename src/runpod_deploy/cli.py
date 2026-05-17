@@ -194,6 +194,41 @@ def _cmd_gpu_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_gpu_inventory(args: argparse.Namespace) -> int:
+    spec = load_job_spec(args.config)
+    ctx = build_job_context(spec, args.config)
+    report = preflight.report_gpu_inventory(ctx)
+    logger.info(f"gpu_order: {list(report.gpu_order)}")
+    widening_pool: set[str] = set()
+    for dc in report.datacenters:
+        logger.info(f"datacenter: {dc.datacenter_id}")
+        stocked = list(dc.configured_available) + list(dc.configured_low_stock)
+        if stocked:
+            for name in dc.configured_available:
+                logger.info(f"  {name}  available")
+            for name in dc.configured_low_stock:
+                logger.info(f"  {name}  low")
+        else:
+            logger.info("  no configured GPU stocked here")
+        for name in dc.configured_stockout:
+            logger.info(f"  {name}  stockout")
+        for name in dc.configured_unknown:
+            logger.info(f"  {name}  (not listed in this datacenter)")
+        if dc.other_available:
+            logger.info(f"  also available (not in gpu_order): {list(dc.other_available)}")
+            widening_pool.update(dc.other_available)
+    if report.any_stocked:
+        logger.info("ok: at least one configured GPU is currently stocked")
+        return 0
+    logger.warning("stock-out: no configured GPU is currently stocked in any datacenter")
+    if widening_pool:
+        logger.warning(
+            f"  widening hint: these GPUs ARE stocked but not in gpu_order: "
+            f"{sorted(widening_pool)}"
+        )
+    return 3
+
+
 def _cmd_gpu_prices(args: argparse.Namespace) -> int:
     prices = _maybe_fetch_prices(force_refresh=bool(args.no_price_cache))
     if not prices:
@@ -903,6 +938,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Skip the GraphQL price fetch (offline / no API key available).",
     )
 
+    gpu_inventory_parser = sub.add_parser(
+        "gpu-inventory",
+        parents=[verbosity],
+        help=(
+            "Report which configured GPUs are currently stocked across "
+            "the configured datacenters. Exits 3 on stock-out for callers "
+            "that want to short-circuit before paying for retry-with-backoff."
+        ),
+    )
+    gpu_inventory_parser.add_argument("--config", type=Path, required=True)
+
     gpu_prices_parser = sub.add_parser(
         "gpu-prices",
         parents=[verbosity],
@@ -1061,6 +1107,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "stop": _cmd_stop,
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
+        "gpu-inventory": _cmd_gpu_inventory,
         "gpu-prices": _cmd_gpu_prices,
         "estimate": _cmd_estimate,
         "ls-runs": _cmd_ls_runs,
