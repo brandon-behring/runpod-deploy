@@ -6,6 +6,12 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`runpod-deploy validate --scan-consumer` warns about FUSE + uv sync
+  + missing `UV_LINK_MODE`**: detects the conjunction documented in
+  Issue #92 (volume_mount under `/workspace`, uv sync invoked from
+  setup/run.body, no `UV_LINK_MODE=copy` exported). Static catch for
+  the silent-hang foot-gun that PR #93 surfaced as a doc fix. Resolves
+  #94.
 - **`lifecycle.on_success: recycle`** — fourth lifecycle action. Pauses
   the pod at end-of-run AND preserves the state-file. The next
   `runpod-deploy run` with the same `state_file:` resumes the paused
