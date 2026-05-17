@@ -4,6 +4,76 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-17 — Documentation audit + normalization + Python API discoverability
+
+### Added (non-breaking)
+
+- **Three forensics functions re-exported at the top-level package**:
+  `runpod_deploy.walk_run_dirs`, `runpod_deploy.load_manifest`, and
+  `runpod_deploy.load_events` are now importable directly from
+  `runpod_deploy` (previously only available via
+  `runpod_deploy.forensics.*`). This surfaces the strongest Python-API
+  use case (multi-manifest forensics) as a first-class import path.
+  Existing fully-qualified imports continue to work; this is purely
+  additive.
+- **New top-level doc `docs/source/python-api-vs-cli.md`** answers
+  "when should I use the Python API instead of the CLI?" with four
+  strong + two weak use cases and worked examples.
+- **New recipe `docs/source/recipes/python-api-for-forensics.md`**
+  walks the canonical multi-manifest forensics pattern using the
+  newly re-exported functions.
+- **Documentation audit report at `docs/audits/docstrings-2026-05-17.md`**
+  (~650 lines) cataloging the style guide for Python docstrings,
+  Markdown recipes, and top-level prose; per-file findings across the
+  full doc surface; the consumer-fit scorecard mapping each public
+  surface to the two known consumers; and the rationale for why no
+  breaking changes met the strict bar this cycle.
+
+### Documentation
+
+- **Recipe template enforced consistently across all 10 recipes**.
+  Seven recipes (`cost-reconciliation.md`, `embed-deploy-metadata.md`,
+  `flash-attention-fallback.md`, `local-postprocess-after-run.md`,
+  `multi-config-sweep.md`, `predictions-only-eval.md`,
+  `reproducibility.md`) were normalized to match the canonical
+  six-section structure exemplified by `local-preflight-then-run.md`:
+  title + one-line Pattern summary + "Why this is a recipe, not a
+  schema feature" SRP framing + concrete pattern block + "What lives
+  where" owner table + "Anti-pattern to avoid" warning + "See also"
+  cross-links.
+- **`docs/source/extending.md` §2 ("Library users") now answers "when
+  to use the Python API vs. the CLI"** with the same use-case
+  scorecard from the new top-level doc. Previously the section
+  documented *how* to use the Python API without ever telling readers
+  *when* to choose it.
+- **`docs/source/migration-v3.md` expanded** from a 23-line stub to a
+  full migration walkthrough (~150 lines): why migrate, one-time
+  setup, per-job migration steps with a field-mapping table,
+  regression testing protocol, backwards-compat timeline.
+- **`docs/source/troubleshooting.md` "unknown flag" entry** rewritten
+  to use version-agnostic language (was: "v0.3.2 added
+  feature-detection"; now: "Modern runpod-deploy probes
+  runpodctl pod create --help once per process").
+- **`runpod_deploy/__init__.py` module docstring expanded** with the
+  four Python-API use cases and an explicit "for most use cases,
+  prefer the CLI" framing.
+
+### Changed
+
+- **`cli.py:208`**: removed one inline comment that restated the
+  visible `rows.sort()` key tuple (per CLAUDE.md §12 "default none"
+  comment policy).
+- **`DEVELOPING.md` environment-setup section**: fixed typo
+  (`coverage-deploy` → `runpod-deploy` in the `git clone` example).
+
+### Tests
+
+- **New `tests/test_init_reexports.py`** verifies every name in
+  `runpod_deploy.__all__` is importable, the three new forensics
+  re-exports point at the underlying `forensics.*` symbols, and the
+  `__all__` groups (constants / classes / callables) are each
+  alphabetized.
+
 ## [0.8.0] - 2026-05-16 — Public docs site at brandon-behring.github.io/runpod-deploy (Sphinx Phase 3 of 3, complete)
 
 ### Added

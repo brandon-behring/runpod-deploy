@@ -18,18 +18,27 @@ strictly "things have broken, what now."
 `--min-memory-in-gb`).
 
 **Diagnosis**: your installed `runpodctl` version doesn't support the
-flag. v0.3.2 added feature-detection so unsupported flags are *skipped*
-with a WARNING rather than emitted blindly, but if you're on the old
-runpod-deploy and a fresh runpodctl install you can still hit this.
+flag. Modern `runpod-deploy` (any current release) probes
+`runpodctl pod create --help` once per process and *skips* unsupported
+flags with a WARNING rather than emitting them blindly. If you're on
+an older `runpod-deploy` paired with a fresh `runpodctl` install, or
+on a newer `runpod-deploy` paired with an old `runpodctl`, the probe
+narrows down the mismatch — but the underlying constraint is whatever
+`runpodctl pod create --help` advertises.
 
-**Fix**: upgrade to runpod-deploy ≥ v0.3.2. The probe parses
-`runpodctl pod create --help` once per process; unsupported flags log
+**Fix**: check your tooling versions first. `runpodctl version` shows
+the locally-installed binary; `pip show runpod-deploy` shows the
+Python package. Then either upgrade `runpod-deploy` to get the
+auto-skip behavior, or upgrade `runpodctl` itself to gain the
+underlying flag.
+
+When the probe skips a flag, the WARNING reads:
 `runpodctl pod create does not support --<flag> in the locally-installed
-version; skipping ...` and the pod still launches.
+version; skipping ...` — the pod still launches without the flag.
 
-If a flag is essential for your workload (e.g., `--spot`), upgrade
-`runpodctl` itself — `runpodctl version` to check, then
-download a newer release.
+If a flag is essential for your workload (e.g., `--spot`), upgrading
+`runpodctl` is the only path; the runpod-deploy probe can detect
+absence but can't synthesize the underlying feature.
 
 ---
 
