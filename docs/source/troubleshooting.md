@@ -84,6 +84,51 @@ run later.
 
 ---
 
+### Pod stuck at `uptimeSeconds: 0` forever — phantom image tag
+
+**Symptom**: `runpodctl pod create` succeeds, the pod transitions to
+`desiredStatus: RUNNING`, but `uptimeSeconds` stays at 0 indefinitely
+and `ssh.error` is `pod not ready` for the full timeout window. The
+trimmed error eventually surfaces as the previous entry's
+`RuntimeError: pod <id> did not become SSH-ready`.
+
+**Diagnosis**: RunPod's API accepts any image string at pod-create
+time without validating against the registry. A typo'd or stale
+`pod.image` tag (e.g. a phantom version like
+`runpod/pytorch:2.5.0-py3.13-cuda12.4.1-cudnn9-devel` that does not
+exist on Docker Hub) provisions a pod whose container runtime then
+sits in image-pull-backoff forever. The SSH proxy never publishes
+because the container never starts. Consumer evidence (2026-05-17):
+two pods burned ~$0.62 before diagnosis on a tag that didn't exist.
+
+**Diagnostic command**:
+
+```bash
+runpod-deploy validate --config foo.yaml --check-image-registry
+```
+
+This HEAD-checks `pod.image` against Docker Hub's tag API. A 404
+prints a loud WARNING with the exact phantom-tag string. Wired into
+`--all` so the full pre-flight catches this:
+
+```bash
+runpod-deploy validate --config foo.yaml --all
+```
+
+**Fix**: open Docker Hub and confirm the tag exists at
+`https://hub.docker.com/r/<owner>/<image>/tags`. Update `pod.image`
+to a tag that does exist.
+
+**Offline / CI workflows**: pass `--skip-registry-check` to suppress
+the HEAD lookup when Docker Hub is unreachable.
+
+**Limits**: only Docker Hub is checked. Non-Docker-Hub registries
+(ghcr.io, quay.io, private registries with a `<host>/` prefix) are
+detected and skipped silently — we have no portable cross-registry
+tag API.
+
+---
+
 ### `no configured GPU is available` post-provision
 
 **Symptom**: the orchestrator emits
