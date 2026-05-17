@@ -44,6 +44,11 @@ logger = logging.getLogger(__name__)
 
 _STEP_MARKER_RE = re.compile(r"__RUNPOD_STEP_(START|DONE)__([\w.\-]+)__")
 
+# Substring used to identify a RunPod stock-out failure surfaced by
+# `runpodctl pod create` and re-raised by ``provider.provision_pod`` as
+# RuntimeError. When matched, the --fallback-cloud-type retry path fires.
+_STOCKOUT_MARKER = "machine does not have the resources"
+
 
 def run_job(
     spec: RunpodJobSpec,
@@ -58,6 +63,7 @@ def run_job(
     print_run_dir: bool = False,
     ssh_ready_timeout_sec_override: int | None = None,
     force_fresh: bool = False,
+    fallback_cloud_type: str | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -101,6 +107,7 @@ def run_job(
     )
     pod: PodConnection | None = None
     pod_resumed = False
+    fallback_event: dict[str, object] | None = None
     if not dry_run and spec.lifecycle.on_success == "recycle":
         if force_fresh:
             _force_fresh_delete_stale(spec.resolved_state_file)
@@ -116,13 +123,16 @@ def run_job(
                 pod_resumed = True
     if pod is None:
         volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
-        pod = provision_pod(
+        effective_fallback = _resolve_effective_fallback_cloud_type(spec, fallback_cloud_type)
+        pod, fallback_event = _provision_with_optional_fallback(
             ctx,
             volume_id=volume_id,
             gpu_id=gpu_id,
             datacenter_id=datacenter_id,
             dry_run=dry_run,
             ssh_ready_timeout_sec=ssh_ready_timeout_sec,
+            primary_cloud_type=spec.pod.cloud_type,
+            fallback_cloud_type=effective_fallback,
         )
     runner = RemoteRunner(
         host=pod.host,
@@ -141,6 +151,8 @@ def run_job(
     for event in pending_failover:
         tel.emit_event("datacenter_failover", **event)
     tel.emit_event("gpu_selected", gpu_id=gpu_id, datacenter_id=datacenter_id)
+    if fallback_event is not None:
+        tel.emit_event("cloud_type_fallback", **fallback_event)
     if pod_resumed:
         tel.emit_event("pod_resumed", pod_id=pod.pod_id, gpu_id=gpu_id, datacenter_id=datacenter_id)
     failed = False
@@ -200,6 +212,96 @@ def run_job(
                     pod_final_state=tel.pod_final_state,
                     pod_resumed=pod_resumed,
                 )
+
+
+def _resolve_effective_fallback_cloud_type(
+    spec: RunpodJobSpec, fallback_cloud_type: str | None
+) -> str | None:
+    """Normalize the requested fallback against incompatible-storage constraints.
+
+    Returns None (no fallback) when ``fallback_cloud_type`` is unset OR
+    when ``storage.mode == network_volume`` (which is SECURE-only on
+    RunPod, so a fallback to COMMUNITY would break volume attachment).
+    Emits a WARNING in the latter case so the operator sees that their
+    flag was silently neutered.
+    """
+    if fallback_cloud_type is None:
+        return None
+    if spec.storage.mode == STORAGE_NETWORK_VOLUME:
+        logger.warning(
+            "[fallback] --fallback-cloud-type=%s skipped: storage.mode=network_volume "
+            "is SECURE-only on RunPod, so fallback to a different cloud_type would "
+            "break volume attachment.",
+            fallback_cloud_type,
+        )
+        return None
+    if fallback_cloud_type == spec.pod.cloud_type:
+        logger.warning(
+            "[fallback] --fallback-cloud-type=%s matches the configured "
+            "pod.cloud_type; skipped (no useful retry).",
+            fallback_cloud_type,
+        )
+        return None
+    return fallback_cloud_type
+
+
+def _provision_with_optional_fallback(
+    ctx: JobContext,
+    *,
+    volume_id: str | None,
+    gpu_id: str,
+    datacenter_id: str,
+    dry_run: bool,
+    ssh_ready_timeout_sec: int,
+    primary_cloud_type: str,
+    fallback_cloud_type: str | None,
+) -> tuple[PodConnection, dict[str, object] | None]:
+    """Provision with a one-shot cloud_type fallback on stock-out.
+
+    Returns ``(pod, fallback_event)`` where ``fallback_event`` is the
+    telemetry payload for ``cloud_type_fallback`` (or ``None`` when no
+    fallback fired). Caller emits the event after the telemetry session
+    starts, matching the existing ``datacenter_failover`` event-buffer
+    pattern.
+
+    When ``fallback_cloud_type`` is None, behaves identically to a bare
+    ``provision_pod`` call. When set, catches RuntimeError matching the
+    RunPod stock-out signature and retries once with the override.
+    """
+    try:
+        pod = provision_pod(
+            ctx,
+            volume_id=volume_id,
+            gpu_id=gpu_id,
+            datacenter_id=datacenter_id,
+            dry_run=dry_run,
+            ssh_ready_timeout_sec=ssh_ready_timeout_sec,
+        )
+        return pod, None
+    except RuntimeError as exc:
+        if fallback_cloud_type is None or _STOCKOUT_MARKER not in str(exc).lower():
+            raise
+        logger.warning(
+            "[fallback] %s stock-out on pod create; retrying with cloud_type=%s",
+            primary_cloud_type,
+            fallback_cloud_type,
+        )
+        pod = provision_pod(
+            ctx,
+            volume_id=volume_id,
+            gpu_id=gpu_id,
+            datacenter_id=datacenter_id,
+            dry_run=dry_run,
+            ssh_ready_timeout_sec=ssh_ready_timeout_sec,
+            cloud_type_override=fallback_cloud_type,
+        )
+        fallback_event: dict[str, object] = {
+            "from_cloud_type": primary_cloud_type,
+            "to_cloud_type": fallback_cloud_type,
+            "gpu_id": gpu_id,
+            "datacenter_id": datacenter_id,
+        }
+        return pod, fallback_event
 
 
 def _force_fresh_delete_stale(state_file: Path) -> None:

@@ -359,6 +359,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print_run_dir=bool(args.print_run_dir),
         ssh_ready_timeout_sec_override=args.ssh_ready_timeout_sec,
         force_fresh=bool(args.force_fresh),
+        fallback_cloud_type=args.fallback_cloud_type,
     )
     return 0
 
@@ -1033,6 +1034,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "this run only. If a stale paused pod is referenced by the "
         "state-file, it is deleted (not resumed). Useful for debugging "
         "'did I actually pull the new image?' without editing YAML.",
+    )
+    run_parser.add_argument(
+        "--fallback-cloud-type",
+        choices=["SECURE", "COMMUNITY"],
+        default=None,
+        help="On pod-create stock-out against the configured pod.cloud_type, "
+        "retry once against this cloud_type. Skipped with a WARNING when "
+        "storage.mode=network_volume (SECURE-only on RunPod). Emits a "
+        "'cloud_type_fallback' telemetry event on retry.",
     )
 
     cleanup_parser = sub.add_parser(

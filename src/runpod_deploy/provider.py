@@ -247,11 +247,23 @@ def _maybe_extend(
 
 
 def _build_pod_create_argv(
-    ctx: JobContext, *, volume_id: str | None, gpu_id: str, datacenter_id: str
+    ctx: JobContext,
+    *,
+    volume_id: str | None,
+    gpu_id: str,
+    datacenter_id: str,
+    cloud_type_override: str | None = None,
 ) -> list[str]:
-    """Build the `runpodctl pod create` argv with feature-detected flag gating."""
+    """Build the `runpodctl pod create` argv with feature-detected flag gating.
+
+    When ``cloud_type_override`` is set, it replaces ``spec.pod.cloud_type``
+    in the emitted ``--cloud-type=`` flag. Used by the orchestrator's
+    ``--fallback-cloud-type`` retry path to invoke pod create against a
+    different cloud_type than the YAML configured.
+    """
     spec = ctx.spec
     supported = _supported_pod_create_flags()
+    cloud_type = cloud_type_override or spec.pod.cloud_type
     argv = [
         "runpodctl",
         "pod",
@@ -287,7 +299,7 @@ def _build_pod_create_argv(
             datacenter_id,
             "--volume-mount-path",
             spec.storage.volume_mount,
-            f"--cloud-type={spec.pod.cloud_type}",
+            f"--cloud-type={cloud_type}",
         ]
     )
     for port in spec.pod.ports:
@@ -315,6 +327,7 @@ def provision_pod(
     datacenter_id: str,
     dry_run: bool,
     ssh_ready_timeout_sec: int = 900,
+    cloud_type_override: str | None = None,
 ) -> PodConnection:
     """Provision a pod and return SSH connection details.
 
@@ -324,9 +337,17 @@ def provision_pod(
     on first-touch GPUs. If the deadline expires, the just-created pod
     is deleted before the ``RuntimeError`` is re-raised so the orphan
     doesn't bill indefinitely.
+
+    Set ``cloud_type_override`` to invoke ``runpodctl pod create`` with a
+    different ``--cloud-type=`` than ``spec.pod.cloud_type``. Used by the
+    orchestrator's ``--fallback-cloud-type`` retry path.
     """
     argv = _build_pod_create_argv(
-        ctx, volume_id=volume_id, gpu_id=gpu_id, datacenter_id=datacenter_id
+        ctx,
+        volume_id=volume_id,
+        gpu_id=gpu_id,
+        datacenter_id=datacenter_id,
+        cloud_type_override=cloud_type_override,
     )
     log_cmd(logger, "runpodctl", argv)
     if dry_run:
