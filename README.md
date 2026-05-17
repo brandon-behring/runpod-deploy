@@ -2,6 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
 [![CI](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml/badge.svg)](https://github.com/brandon-behring/runpod-deploy/actions/workflows/test.yml)
+[![Docs](https://github.com/brandon-behring/runpod-deploy/actions/workflows/docs.yml/badge.svg)](https://brandon-behring.github.io/runpod-deploy/)
 [![Python](https://img.shields.io/pypi/pyversions/runpod-deploy.svg)](https://pypi.org/project/runpod-deploy/)
 [![Downloads](https://static.pepy.tech/badge/runpod-deploy)](https://pepy.tech/project/runpod-deploy)
 [![License](https://img.shields.io/pypi/l/runpod-deploy.svg)](https://github.com/brandon-behring/runpod-deploy/blob/main/LICENSE)
@@ -106,6 +107,13 @@ schema version after at least two projects need the same extension point.
 
 ## Docs
 
+**Full site (searchable, with API reference):**
+**[https://brandon-behring.github.io/runpod-deploy/](https://brandon-behring.github.io/runpod-deploy/)**
+
+Direct links to the GitHub-rendered markdown:
+
+- [Quickstart](docs/source/quickstart.md) — 5-minute onboarding
+- [Lifecycle](docs/source/lifecycle.md) — what happens at each phase of a `run`
 - [Config reference](docs/source/config-reference.md)
 - [RunPod gotchas](docs/source/runpod-gotchas.md)
 - [Extending guide](docs/source/extending.md)

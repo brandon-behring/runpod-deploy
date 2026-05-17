@@ -127,30 +127,13 @@ jobs:
       - name: Doctest markdown
         run: make doctest
 
-  # Sphinx docs build (Phase 1 of 3, v0.7.8). Strict mode: `-W` treats
-  # warnings as errors; `--keep-going` surfaces every warning in one log
-  # for faster fix-cycles. Phase 3 will replace this build-only job with
-  # the publishing workflow (.github/workflows/docs.yml).
-  docs:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-      - name: Create venv
-        run: uv venv --python 3.13
-      - name: Install
-        run: uv pip install -e ".[docs]"
-      - name: Build Sphinx site (two-pass; autosummary writes stubs on pass 1)
-        # Pass 1 generates autosummary stub pages under
-        # docs/source/api/generated/ (gitignored). Pass 2 is the strict
-        # gate — by then every :toctree: reference resolves, so -W can
-        # surface real warnings without false-positives on freshly-
-        # generated stubs.
-        run: |
-          uv run sphinx-build -b html docs/source/ docs/build/html/
-          uv run sphinx-build -b html -W --keep-going docs/source/ docs/build/html/
+  # Sphinx docs build was here in Phase 1+2 as a build-only CI gate. In
+  # Phase 3 (v0.8.0) the canonical docs build moved to
+  # `.github/workflows/docs.yml`, which both builds AND publishes to
+  # GitHub Pages on every push to main. The Pages workflow runs on PRs
+  # too (via push to a branch) but does NOT deploy from a PR head — only
+  # main + tags. If you want to verify a Sphinx-build PR change before
+  # merging, run `make docs` locally.
 
   # Run pip-audit against the locked dependency set. CVE detection.
   # Allows the workflow to pass on unfixed vulnerabilities by default

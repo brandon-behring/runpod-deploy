@@ -4,6 +4,39 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-16 — Public docs site at brandon-behring.github.io/runpod-deploy (Sphinx Phase 3 of 3, complete)
+
+### Added
+
+- **Live documentation site** at
+  [https://brandon-behring.github.io/runpod-deploy/](https://brandon-behring.github.io/runpod-deploy/).
+  Builds + publishes via new `.github/workflows/docs.yml` on every
+  push to `main` and tag push (`v*`). PR pushes trigger the `build`
+  job only (gates doc-breaking PRs) but never deploy. Two-pass
+  `sphinx-build` (pass 1 generates autosummary stubs; pass 2 is the
+  strict `-W --keep-going` gate). Pages deployment uses
+  `actions/upload-pages-artifact@v3` + `actions/deploy-pages@v4`
+  (OIDC-based, no secrets required).
+- **README docs badge** alongside PyPI/CI/Python/Downloads/License.
+- **Live URL prominent in the README Docs section** + retained GitHub
+  markdown-rendered fallback links for readers who arrive at the repo
+  directly.
+
+### Changed
+
+- **`pyproject.toml` `[project.urls].Documentation`** updated from a
+  single-file lifecycle.md link to the live site root URL. Shows up in
+  the PyPI page sidebar starting with this release.
+- **Removed** the build-only `docs` job from
+  `.github/workflows/test.yml`. The Pages workflow now covers both
+  PR-time gating (no deploy from PR head) and production publishing.
+
+### Migration note
+
+**One-time repository setting required for the Pages deploy to succeed**:
+Settings → Pages → Source: "GitHub Actions". The first workflow run
+after this is enabled will create the site and surface the live URL.
+
 ## [0.7.9] - 2026-05-16 — Per-module autodoc API reference (Sphinx Phase 2 of 3)
 
 ### Added
