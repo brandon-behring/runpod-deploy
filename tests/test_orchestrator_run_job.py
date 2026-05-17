@@ -370,3 +370,247 @@ def test_wait_for_sshd_retries_then_raises_runtime_error(
 
     ssh_calls = [c for c in fake_subprocess.calls if c[0] == "ssh"]
     assert len(ssh_calls) == 7
+
+
+# ---------- --fallback-cloud-type ----------
+
+
+@pytest.fixture
+def _stub_pod_create_help_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass the `runpodctl pod create --help` probe for fallback tests.
+
+    Without this, the probe consumes the first FIFO FakeResult on cold-cache
+    runs (the cache is a module-level attribute that survives across tests
+    in the same pytest session). Mirrors the per-file autouse stub at
+    tests/test_provider_subprocess.py:21.
+    """
+    from runpod_deploy import provider
+
+    monkeypatch.setattr(provider, "_supported_pod_create_flags", lambda: frozenset())
+
+
+def _enqueue_runpodctl_happy_path_ephemeral(fake: FakeSubprocess) -> None:
+    """Variant of `_enqueue_runpodctl_happy_path` for storage.mode=ephemeral.
+
+    Differs from the network-volume variant by skipping the
+    `runpodctl network-volume list` call between datacenter selection
+    and pod creation.
+    """
+    fake.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake.when(
+        lambda argv: bool(argv)
+        and argv[:3] == ["runpodctl", "pod", "get"]
+        and "--include-machine" in argv,
+        FakeResult(
+            stdout=json.dumps({"id": "pod-xyz", "costPerHr": 0.35, "desiredStatus": "RUNNING"})
+        ),
+    )
+    fake.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "stop"],
+        FakeResult(returncode=0),
+    )
+    fake.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "US-MD-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "High"}
+                        ],
+                    }
+                ]
+            )
+        ),
+        FakeResult(stdout=json.dumps({"id": "pod-xyz"})),
+        FakeResult(
+            stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {"ip": "5.6.7.8", "port": 22033}})
+        ),
+    )
+
+
+def _enqueue_runpodctl_fallback_path(fake: FakeSubprocess) -> None:
+    """Enqueue an ephemeral-storage provisioning sequence with stock-out on first pod create."""
+    # Side-channel calls (git, pod-get-machine, pod stop) — predicate-routed.
+    fake.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake.when(
+        lambda argv: bool(argv)
+        and argv[:3] == ["runpodctl", "pod", "get"]
+        and "--include-machine" in argv,
+        FakeResult(
+            stdout=json.dumps({"id": "pod-xyz", "costPerHr": 0.35, "desiredStatus": "RUNNING"})
+        ),
+    )
+    fake.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "stop"],
+        FakeResult(returncode=0),
+    )
+    # FIFO: datacenter list → pod create #1 (stock-out) → pod create #2 (success) → pod get.
+    # Ephemeral storage skips the network-volume list call.
+    fake.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "US-MD-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "High"}
+                        ],
+                    }
+                ]
+            )
+        ),
+        # Primary attempt: stock-out
+        FakeResult(
+            returncode=1,
+            stdout='{"error":"failed to create pod: This machine does not have the resources"}',
+            stderr="",
+        ),
+        # Fallback attempt: succeeds
+        FakeResult(stdout=json.dumps({"id": "pod-xyz"})),
+        FakeResult(
+            stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {"ip": "5.6.7.8", "port": 22033}})
+        ),
+    )
+
+
+@pytest.mark.unit
+def test_fallback_cloud_type_retries_pod_create_on_stockout(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    _stub_pod_create_help_probe: None,
+) -> None:
+    """SECURE stock-out triggers one retry with --cloud-type=COMMUNITY when fallback is set."""
+    caplog.set_level(logging.INFO, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_fallback_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="__RUNPOD_DEPLOY_DONE__\n"))
+    config = _write_full_config(tmp_path, storage_mode="ephemeral")
+    spec = load_job_spec(config)
+
+    run_job(
+        spec,
+        config_path=config,
+        dry_run=False,
+        offline_dry_run=False,
+        fallback_cloud_type="COMMUNITY",
+    )
+
+    pod_creates = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "create"]]
+    assert len(pod_creates) == 2, f"expected 2 pod create calls, got {len(pod_creates)}"
+    assert "--cloud-type=SECURE" in pod_creates[0]
+    assert "--cloud-type=COMMUNITY" in pod_creates[1]
+    assert "stock-out on pod create; retrying with cloud_type=COMMUNITY" in caplog.text
+    # Telemetry event landed in events.jsonl
+    events_files = list(tmp_path.rglob("events.jsonl"))
+    assert len(events_files) == 1
+    events = [json.loads(line) for line in events_files[0].read_text().splitlines()]
+    fallback_events = [e for e in events if e["event"] == "cloud_type_fallback"]
+    assert len(fallback_events) == 1
+    assert fallback_events[0]["from_cloud_type"] == "SECURE"
+    assert fallback_events[0]["to_cloud_type"] == "COMMUNITY"
+
+
+@pytest.mark.unit
+def test_fallback_cloud_type_skipped_for_network_volume(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    _stub_pod_create_help_probe: None,
+) -> None:
+    """network_volume storage forces fallback to None with a WARNING (SECURE-only constraint)."""
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="__RUNPOD_DEPLOY_DONE__\n"))
+    config = _write_full_config(tmp_path, storage_mode="network_volume")
+    spec = load_job_spec(config)
+
+    run_job(
+        spec,
+        config_path=config,
+        dry_run=False,
+        offline_dry_run=False,
+        fallback_cloud_type="COMMUNITY",
+    )
+
+    assert "storage.mode=network_volume is SECURE-only" in caplog.text
+
+
+@pytest.mark.unit
+def test_fallback_cloud_type_not_triggered_without_stockout(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    _stub_pod_create_help_probe: None,
+) -> None:
+    """When the primary cloud_type provisions cleanly, no fallback fires."""
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="__RUNPOD_DEPLOY_DONE__\n"))
+    config = _write_full_config(tmp_path)
+    spec = load_job_spec(config)
+
+    run_job(
+        spec,
+        config_path=config,
+        dry_run=False,
+        offline_dry_run=False,
+        fallback_cloud_type="COMMUNITY",
+    )
+
+    pod_creates = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "create"]]
+    assert len(pod_creates) == 1
+    assert "--cloud-type=SECURE" in pod_creates[0]
+    events_files = list(tmp_path.rglob("events.jsonl"))
+    if events_files:
+        events = [json.loads(line) for line in events_files[0].read_text().splitlines()]
+        assert not any(e["event"] == "cloud_type_fallback" for e in events)
+
+
+@pytest.mark.unit
+def test_fallback_cloud_type_skipped_when_matches_primary(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    _stub_pod_create_help_probe: None,
+) -> None:
+    """fallback == spec.pod.cloud_type is a no-op with WARNING (no useful retry).
+
+    Uses ephemeral storage so the network-volume guard (which fires earlier
+    in _resolve_effective_fallback_cloud_type) doesn't pre-empt this check.
+    """
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path_ephemeral(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="__RUNPOD_DEPLOY_DONE__\n"))
+    config = _write_full_config(tmp_path, storage_mode="ephemeral")
+    spec = load_job_spec(config)
+
+    run_job(
+        spec,
+        config_path=config,
+        dry_run=False,
+        offline_dry_run=False,
+        fallback_cloud_type="SECURE",  # same as spec.pod.cloud_type default
+    )
+
+    assert "matches the configured pod.cloud_type; skipped" in caplog.text

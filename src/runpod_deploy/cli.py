@@ -315,6 +315,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         max_gpu_price_usd=args.max_gpu_price,
         cli_variables=cli_variables if cli_variables else None,
         print_run_dir=bool(args.print_run_dir),
+        fallback_cloud_type=args.fallback_cloud_type,
     )
     return 0
 
@@ -863,6 +864,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "drivers that need a machine-parseable handle to this attempt's "
         "run dir (avoids the 'ls -td' race documented in "
         "docs/recipes/multi-config-sweep.md).",
+    )
+    run_parser.add_argument(
+        "--fallback-cloud-type",
+        choices=["SECURE", "COMMUNITY"],
+        default=None,
+        help="On pod-create stock-out against the configured pod.cloud_type, "
+        "retry once against this cloud_type. Skipped with a WARNING when "
+        "storage.mode=network_volume (SECURE-only on RunPod). Emits a "
+        "'cloud_type_fallback' telemetry event on retry.",
     )
 
     stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
