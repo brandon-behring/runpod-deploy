@@ -44,6 +44,9 @@ domain logic.
 - [`reproducibility.md`](reproducibility.md) — `pod.python_version`
   YAML field + `uv python install/pin` auto-injection to lock the
   CPython interpreter version across sweep runs.
+- [`python-api-for-forensics.md`](python-api-for-forensics.md) —
+  multi-manifest forensics via `runpod_deploy.walk_run_dirs` +
+  `load_manifest` + `load_events`; the strongest Python-API use case.
 
 ## By use case
 
@@ -60,3 +63,4 @@ workflows pull from 3–4 of these.
 | **Post-mortem a failed sweep** | [`cost-reconciliation.md`](cost-reconciliation.md) + [`local-postprocess-after-run.md`](local-postprocess-after-run.md) + [`troubleshooting.md`](../troubleshooting.md) (Forensic recovery) |
 | **Stitch deploy provenance into your own evals manifest** | [`embed-deploy-metadata.md`](embed-deploy-metadata.md) + [`local-postprocess-after-run.md`](local-postprocess-after-run.md) |
 | **First-time consumer setup** | [`local-preflight-then-run.md`](local-preflight-then-run.md) + the parent [`quickstart.md`](../quickstart.md) |
+| **Multi-manifest forensics in Python** | [`python-api-for-forensics.md`](python-api-for-forensics.md) + [`../python-api-vs-cli.md`](../python-api-vs-cli.md) |

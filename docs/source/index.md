@@ -14,6 +14,7 @@ deterministically.
 quickstart
 lifecycle
 config-reference
+python-api-vs-cli
 ```
 
 ## Recipes
@@ -31,6 +32,7 @@ recipes/cost-reconciliation
 recipes/predictions-only-eval
 recipes/flash-attention-fallback
 recipes/reproducibility
+recipes/python-api-for-forensics
 ```
 
 ## Examples
