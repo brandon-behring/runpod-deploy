@@ -69,7 +69,41 @@ Skips GPUs above $4.50/hr during the failover loop. Reads
 
 ## 2. Library users — `from runpod_deploy import ...`
 
-Public API surface (re-exported from `__init__.py`):
+### When to use the Python API vs. the CLI
+
+`runpod-deploy` is primarily a CLI tool. Both known consumers today
+invoke it exclusively via Makefile (`runpod-deploy run --config
+<yaml>`); neither imports the Python package. For most use cases,
+**prefer the CLI** — it's the documented happy path, the rev-rev
+surface for the maintainers, and the subprocess overhead is
+negligible against multi-minute GPU pod runtime.
+
+The Python API earns its keep in four specific situations:
+
+| Use case | Why Python beats CLI | Symbols to use |
+|---|---|---|
+| **Multi-manifest forensics** | Analyzing N past runs at once with type-checked field access beats hand-rolling `json.loads()` + path-walking in bash | `walk_run_dirs`, `load_manifest`, `load_events` (see [recipes/python-api-for-forensics.md](recipes/python-api-for-forensics.md)) |
+| **Type-safe dynamic configs** | Programs building or inspecting `RunpodJobSpec` objects (e.g., a Bayesian optimizer varying `gpu_order` beyond what `--var KEY=VALUE` expresses; a CI gate asserting on a loaded YAML) | `load_job_spec` + the `*Spec` dataclasses |
+| **Cost-prediction tooling** | Dashboards or CI gates estimating spend before any pod is provisioned; no need for a subprocess just to call the GraphQL pricing layer | `fetch_gpu_prices`, `select_price_for_pod`, `GpuPrice` |
+| **Embedded orchestration** | Calling `run_job()` from a larger Python platform (e.g., a web UI's "Deploy" button or a multi-cloud orchestrator routing some jobs to RunPod) | `load_job_spec` + `run_job` |
+
+The Python API is **not** the right tool for:
+
+- *In-process parallel sweeps* — subprocess overhead is negligible
+  vs. GPU minutes; the documented [`multi-config-sweep.md`](recipes/multi-config-sweep.md)
+  bash pattern with `wait -n` semaphore is simpler and wins on
+  observability.
+- *Direct construction of `PodConnection` / `RemoteRunner` /
+  `select_gpu_across_datacenters`* — these are low-level orchestration
+  plumbing surfaces; the orchestrator wraps them. Consumers almost
+  never need to call them directly.
+
+See [`python-api-vs-cli.md`](python-api-vs-cli.md) for the full
+decision criterion and worked examples of each use case.
+
+### Public API surface
+
+Re-exported from `__init__.py`:
 
 | Symbol | What it is |
 |---|---|

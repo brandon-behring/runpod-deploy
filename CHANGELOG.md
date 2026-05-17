@@ -6,6 +6,12 @@ This project follows Semantic Versioning.
 
 ### Added
 
+#### Lifecycle redesign (closes #88, #90)
+
+- **`lifecycle:` config block** with three-valued actions
+  (`preserve | stop | delete`) for `on_success` and `on_failure`. See
+  [`lifecycle.md` §7](docs/source/lifecycle.md) and
+  [`config-reference.md`](docs/source/config-reference.md).
 - **`lifecycle.on_success: recycle`** — fourth lifecycle action. Pauses
   the pod at end-of-run AND preserves the state-file. The next
   `runpod-deploy run` with the same `state_file:` resumes the paused
@@ -16,26 +22,6 @@ This project follows Semantic Versioning.
   with a WARNING. **Success-path only** — `on_failure: recycle` is
   rejected at validation because failed pods have potentially corrupted
   state. Resolves #90.
-- **`runpod-deploy run --force-fresh`** CLI flag — skip the recycle
-  resume attempt for one invocation; if a stale paused pod is
-  referenced by the state-file, it is deleted (not resumed). Useful
-  for debugging "did I actually pull the new image?".
-- **`try_resume_pod` function** in `runpod_deploy.provider` — the
-  state-file-pointer-driven resume primitive. Returns `PodConnection`
-  on successful resume, `None` (with a WARNING explaining why) on any
-  fall-through condition.
-- **`pod_resumed: bool`** field in the v2 manifest, plus a
-  `pod_resumed` telemetry event. Distinguishes recycled-warm runs from
-  fresh-cold runs for cost / reproducibility analysis.
-
-### Changed
-
-- **State-file payload extended** from `{pod_id, gpu_id}` to
-  `{pod_id, gpu_id, image, datacenter_id}`. The two new fields are
-  read by `try_resume_pod` to detect spec drift before resuming a
-  paused pod. Older state-files (missing the new fields) are treated
-  as drift → fresh-create.
-
 - **`budget.ssh_ready_timeout_sec`** (default **900 s**) — configurable
   deadline for SSH info to populate after `runpodctl pod create`. The
   old hard-coded 240 s was too aggressive for cold-pull of cudnn-devel
@@ -45,14 +31,10 @@ This project follows Semantic Versioning.
   first-pull on a new image/DC without editing YAML. Mirrors the
   existing override taxonomy (`--gpu-id`, `--datacenter-id`,
   `--max-gpu-price`).
-- **Periodic INFO progress log** inside `_wait_for_pod_ready` for
-  waits longer than 60 s. Heartbeat every 30 s with status,
-  `ssh.error`, and `uptimeSeconds` — operator gets visible signal
-  mid-wait instead of staring at a silent terminal for up to 15 min.
-- **`lifecycle:` config block** with three-valued actions
-  (`preserve | stop | delete`) for `on_success` and `on_failure`. See
-  [`lifecycle.md` §7](docs/source/lifecycle.md) and
-  [`config-reference.md`](docs/source/config-reference.md).
+- **`runpod-deploy run --force-fresh`** CLI flag — skip the recycle
+  resume attempt for one invocation; if a stale paused pod is
+  referenced by the state-file, it is deleted (not resumed). Useful
+  for debugging "did I actually pull the new image?".
 - **`runpod-deploy ls-stale`** — read-only CLI subcommand listing
   every EXITED pod on the account with volume size, age, and
   estimated daily / monthly storage cost. Footer shows account-wide
@@ -67,18 +49,60 @@ This project follows Semantic Versioning.
   cost, the literal `runpod-deploy cleanup --state-file …` command,
   and a pointer to `ls-stale`. Pinned by regression test so future
   refactors can't drop the operator nudge.
-- **Recipes**:
-  [`forensics-then-cleanup.md`](docs/source/recipes/forensics-then-cleanup.md),
-  [`stale-pod-audit.md`](docs/source/recipes/stale-pod-audit.md),
-  [`payload-reuse-via-network-volume.md`](docs/source/recipes/payload-reuse-via-network-volume.md).
+- **`try_resume_pod` function** in `runpod_deploy.provider` — the
+  state-file-pointer-driven resume primitive. Returns `PodConnection`
+  on successful resume, `None` (with a WARNING explaining why) on any
+  fall-through condition.
+- **`pod_resumed: bool`** field in the v2 manifest, plus a
+  `pod_resumed` telemetry event. Distinguishes recycled-warm runs from
+  fresh-cold runs for cost / reproducibility analysis.
 - **Python API**: `cleanup_pod`, `list_stale_pods`, `bulk_delete_pods`,
   `StalePod`, `LifecyclePolicySpec`, `LifecycleAction`,
   `LIFECYCLE_ACTIONS`, `VOLUME_STORAGE_USD_PER_GB_MONTH`,
   `estimate_volume_storage_cost_usd_per_day` are all exported from
   `runpod_deploy`.
 
+#### Python-API discoverability
+
+- **Three forensics functions re-exported at the top-level package**:
+  `runpod_deploy.walk_run_dirs`, `runpod_deploy.load_manifest`, and
+  `runpod_deploy.load_events` are now importable directly from
+  `runpod_deploy` (previously only available via
+  `runpod_deploy.forensics.*`). This surfaces the strongest Python-API
+  use case (multi-manifest forensics) as a first-class import path.
+  Existing fully-qualified imports continue to work; this is purely
+  additive.
+- **New top-level doc `docs/source/python-api-vs-cli.md`** answers
+  "when should I use the Python API instead of the CLI?" with four
+  strong + two weak use cases and worked examples.
+- **New recipe `docs/source/recipes/python-api-for-forensics.md`**
+  walks the canonical multi-manifest forensics pattern using the
+  newly re-exported functions.
+- **Documentation audit report at `docs/audits/docstrings-2026-05-17.md`**
+  (~650 lines) cataloging the style guide for Python docstrings,
+  Markdown recipes, and top-level prose; per-file findings across the
+  full doc surface; the consumer-fit scorecard mapping each public
+  surface to the two known consumers; and the rationale for why no
+  breaking changes met the strict bar this cycle.
+
 ### Changed
 
+- **Schema rename**: `stop:` → `lifecycle:` in YAML configs.
+  Dataclass `StopPolicySpec` renamed to `LifecyclePolicySpec`.
+  `RunpodJobSpec.stop` is now `RunpodJobSpec.lifecycle`. Field type
+  is `typing.Literal["preserve", "stop", "delete", "recycle"]` instead
+  of `bool`.
+- **Default `on_success` is now `delete`** (was `true` / "stop" in
+  practice). Successful runs release their volume disk automatically.
+- **Default `on_failure` is now `stop`** (was `true` / "stop" in
+  practice — unchanged semantically, just made explicit). Failed
+  runs preserve the pod paused for SSH forensics; the new WARNING
+  documents how to release it.
+- **State-file payload extended** from `{pod_id, gpu_id}` to
+  `{pod_id, gpu_id, image, datacenter_id}`. The two new fields are
+  read by `try_resume_pod` to detect spec drift before resuming a
+  paused pod. Older state-files (missing the new fields) are treated
+  as drift → fresh-create.
 - **SSH-ready wait deadline** raised from a hard-coded **240 s → 900 s**.
   The old value timed out on cold-pull of cudnn-devel pytorch images
   (~6–12 GB) before the SSH proxy could publish a host/port. Now
@@ -87,17 +111,44 @@ This project follows Semantic Versioning.
   `{desiredStatus, ssh, uptimeSeconds}` from the last observed
   pod-get payload instead of the full dict. The old dump leaked the
   env block (including SSH pubkeys) and was nearly unreadable.
-- **Schema rename**: `stop:` → `lifecycle:` in YAML configs.
-  Dataclass `StopPolicySpec` renamed to `LifecyclePolicySpec`.
-  `RunpodJobSpec.stop` is now `RunpodJobSpec.lifecycle`. Field type
-  is `typing.Literal["preserve", "stop", "delete"]` instead of
-  `bool`.
-- **Default `on_success` is now `delete`** (was `true` / "stop" in
-  practice). Successful runs release their volume disk automatically.
-- **Default `on_failure` is now `stop`** (was `true` / "stop" in
-  practice — unchanged semantically, just made explicit). Failed
-  runs preserve the pod paused for SSH forensics; the new WARNING
-  documents how to release it.
+- **Periodic INFO progress log** inside `_wait_for_pod_ready` for
+  waits longer than 60 s. Heartbeat every 30 s with status,
+  `ssh.error`, and `uptimeSeconds` — operator gets visible signal
+  mid-wait instead of staring at a silent terminal for up to 15 min.
+
+### Documentation
+
+- **Recipe template enforced consistently across all 10 recipes**.
+  Seven recipes (`cost-reconciliation.md`, `embed-deploy-metadata.md`,
+  `flash-attention-fallback.md`, `local-postprocess-after-run.md`,
+  `multi-config-sweep.md`, `predictions-only-eval.md`,
+  `reproducibility.md`) were normalized to match the canonical
+  six-section structure exemplified by `local-preflight-then-run.md`:
+  title + one-line Pattern summary + "Why this is a recipe, not a
+  schema feature" SRP framing + concrete pattern block + "What lives
+  where" owner table + "Anti-pattern to avoid" warning + "See also"
+  cross-links.
+- **Three new lifecycle recipes**:
+  [`forensics-then-cleanup.md`](docs/source/recipes/forensics-then-cleanup.md),
+  [`stale-pod-audit.md`](docs/source/recipes/stale-pod-audit.md),
+  [`payload-reuse-via-network-volume.md`](docs/source/recipes/payload-reuse-via-network-volume.md).
+- **`docs/source/extending.md` §2 ("Library users") now answers "when
+  to use the Python API vs. the CLI"** with the same use-case
+  scorecard from the new top-level doc.
+- **`docs/source/migration-v3.md` expanded** from a 23-line stub to a
+  full migration walkthrough (~150 lines).
+- **`docs/source/troubleshooting.md` "unknown flag" entry** rewritten
+  to use version-agnostic language.
+- **`runpod_deploy/__init__.py` module docstring expanded** with the
+  four Python-API use cases.
+
+### Tests
+
+- **New `tests/test_init_reexports.py`** verifies every name in
+  `runpod_deploy.__all__` is importable, the three new forensics
+  re-exports point at the underlying `forensics.*` symbols, and the
+  `__all__` groups (constants / classes / callables) are each
+  alphabetized.
 
 ### Fixed
 

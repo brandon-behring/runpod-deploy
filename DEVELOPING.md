@@ -13,7 +13,7 @@ For coding standards (frozen dataclasses, stdlib exceptions,
 ## Environment setup
 
 ```sh
-git clone https://github.com/brandon-behring/coverage-deploy.git   # (or fork URL)
+git clone https://github.com/brandon-behring/runpod-deploy.git   # (or fork URL)
 cd runpod-deploy
 uv venv
 uv pip install -e ".[dev]"

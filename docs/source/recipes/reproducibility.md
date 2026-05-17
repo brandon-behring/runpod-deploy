@@ -1,12 +1,27 @@
 # Recipe: pod-Python reproducibility
 
-**Problem**: a YAML that declares `requires-python = ">=3.13"` in
-pyproject and has no `.python-version` file can resolve to a different
-CPython minor version on successive pod runs (e.g. 3.13 today, 3.14
-next month). Reproducibility claims that hinge on git SHA + HF revision
-+ uv.lock get a third moving part nobody declared.
+**Pattern:** pin the pod-side CPython interpreter via
+`pod.python_version` so successive pod runs use the exact same
+interpreter, closing the third leg of the reproducibility tripod (git
+SHA + lockfile hash + interpreter version).
 
-## Fix: pin via `pod.python_version`
+## Why this is a recipe, not a schema feature
+
+`pod.python_version` *is* a schema field — that part is upstream. What
+makes the surrounding workflow a recipe is the *integration story*:
+how you reconcile this YAML pin with `requires-python` in pyproject,
+which patch level vs minor pin you choose for which use case, and how
+you couple the pin with manifest provenance for paper-grade
+reproducibility claims. Those decisions are consumer-domain and
+project-specific.
+
+A YAML that declares `requires-python = ">=3.13"` in pyproject and has
+no `.python-version` file can resolve to a different CPython minor
+version on successive pod runs (e.g. 3.13 today, 3.14 next month).
+Reproducibility claims that hinge on git SHA + HF revision + uv.lock
+get a third moving part nobody declared. The fix is below.
+
+## Pattern (YAML)
 
 ```yaml
 pod:
@@ -63,6 +78,31 @@ preflight step — before any user `preflight` commands or run-body
 execute. The operator pays ~30s of pod time to surface a fixable
 config issue, not a multi-minute mid-run failure with partial
 artifacts.
+
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Honoring `pod.python_version` and injecting the install/pin preflight | `runpod-deploy run` (`orchestrator._build_python_pin_preflight`) |
+| Choosing the exact patch version (`"3.13.5"`) vs minor (`"3.13"`) | Your project (canonical sweeps vs dev loops) |
+| Setting `requires-python` floor in `pyproject.toml` | Your project (package-domain constraint) |
+| Caching the pulled interpreter (`~/.local/share/uv/python/`) | `uv` (idempotent across pod re-runs) |
+| Asserting all shards in a sweep used the same interpreter | Your post-run analysis (read `python_version` echo from each manifest) |
+
+## Anti-pattern to avoid
+
+**Do not rely on `requires-python = ">=3.13"` alone for canonical
+reproducibility.** It's a *floor*, not a pin — uv picks the highest
+available interpreter satisfying it, which can drift between pod
+provisioning runs as `uv python install`'s available-versions list
+updates.
+
+**Do not commit a `.python-version` file in the project root that
+disagrees with `pod.python_version`.** The auto-injected preflight
+writes `.python-version` *into the staged project dir* using the YAML
+value, but a pre-existing committed file can confuse reviewers about
+which is authoritative. Either commit `.python-version` matching the
+YAML, or omit it and let the orchestrator manage it.
 
 ## See also
 

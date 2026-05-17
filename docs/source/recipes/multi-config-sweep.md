@@ -4,9 +4,22 @@
 per dataset slice, or one per `--var seed=N`) sharing a project root
 and a common pre/post-flow.
 
-`runpod-deploy` does not orchestrate sweeps itself (single-responsibility
-boundary — see [`README.md`](README.md)). Consumers drive the loop in
-bash, Make, or Python around `runpod-deploy run`.
+## Why this is a recipe, not a schema feature
+
+Sweep orchestration is *consumer-domain*: how many shards to run in
+parallel, what counts as a transient failure worth retrying, how to
+aggregate results across shards, what cost cap applies to the fleet as
+a whole — all depend on your project's release cadence and budget
+tolerance. None of that is deployment metadata, and any one upstream
+choice would be wrong for some consumer.
+
+What `runpod-deploy` owns is the *single-job primitive*: each
+`runpod-deploy run` invocation provisions one pod, runs one config,
+pulls one set of artifacts, and writes one manifest. Composing those
+into a sweep is the consumer's responsibility — typically a bash loop,
+a Makefile target, or a Python driver. This recipe documents the
+canonical bash patterns, including the bash-semaphore pitfalls that
+bite first-time implementers.
 
 ## Pattern (sequential bash)
 
@@ -199,6 +212,39 @@ example above.
   so post-processing across the sweep just globs the directory tree.
 - For multi-shard cost reconciliation, see
   [`cost-reconciliation.md`](cost-reconciliation.md).
+
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Provisioning + running ONE shard (one config, one pod) | `runpod-deploy run` |
+| Validating each shard's YAML before billing time | `runpod-deploy validate --all` |
+| Iterating over N shards (sequential or parallel) | Your sweep driver (bash loop, Makefile target, Python script) |
+| Bounded-concurrency semaphore semantics (`wait -n`, `set -e` interaction) | Your sweep driver (see Pitfalls below) |
+| Per-shard retry on transient failures | Your sweep driver (decide what counts as transient) |
+| Aggregate cost-cap / wall-time enforcement across shards | Your sweep driver (sum manifest fields; abort if running total exceeds budget) |
+| Per-shard `RUN_DIR=...` discovery (avoiding `ls -td` races) | `runpod-deploy run --print-run-dir` |
+| Post-sweep aggregation (metrics across all `artifacts/runpod/<ts>/`) | Your post-processing code (consumer-domain) |
+
+## Anti-pattern to avoid
+
+**Do not run more shards in parallel than your local Threadripper can
+sustain stable SSH connections to.** Each shard holds an SSH session to
+its pod for the duration of the run; the orchestrator's tail loop
+polls every `budget.poll_interval_sec`. Saturating local CPU or
+filesystem (rsync on large stage trees) causes SSH timeouts that look
+like pod failures.
+
+**Do not skip `set -euo pipefail` in the parallel bash pattern.** The
+`pipefail` flag is mandatory for `tee` to surface non-zero exit; `-e`
++ `wait -n` interact in a non-obvious way that the Pitfalls section
+below explains in detail.
+
+**Do not push aggregate-cost-cap logic into `runpod-deploy`.** It's a
+sweep-domain concern; if you need it, sum `estimated_cost_usd` across
+manifests in your driver between shard launches and abort before
+launching the next. The per-shard `--cost-cap-usd` flag is the only
+budget primitive runpod-deploy owns.
 
 ## See also
 

@@ -5,7 +5,20 @@
 bootstrap CIs, paired tests, and calibration fits run **locally on CPU**
 after `runpod-deploy run` pulls the parquet back.
 
-## Why
+## Why this is a recipe, not a schema feature
+
+The split between "what runs on GPU" and "what runs on CPU" is
+*consumer-domain*: which metrics you care about, what bootstrap N is
+appropriate for your sample size, whether your calibration fit is
+GPU-tractable, and whether you need paired tests between scorer
+variants all depend on your evaluation protocol. Baking a metrics
+runner into `runpod-deploy` would force one philosophy on every
+consumer.
+
+What `runpod-deploy` owns is the *pull*: `artifacts[*]` with
+`required: true` ensures the predictions parquet lands locally even on
+partial failures, so post-run CPU analysis has a deterministic input.
+The CPU-side workflow itself is yours.
 
 Bootstrap N=10K–100K across a multi-slice × multi-scorer matrix is
 ~minutes of billed GPU time per shard but ~seconds on a beefy local
@@ -64,6 +77,32 @@ def test_pod_does_not_run_bootstrap():
 
 Cheap to maintain; catches accidental regressions during config-template
 refactors.
+
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Running the model and emitting per-row predictions | Pod (GPU) — your `run.body` invokes your `predict` entry point |
+| Pulling `predictions_full.parquet` back to the local run-dir | `runpod-deploy run` (`artifacts[*]` with `required: true`) |
+| Bootstrap CIs, paired tests, calibration fits | Your local post-processing (CPU; consumer-domain) |
+| Enforcing the "no bootstrap on the pod" contract | Your project's lint / CI (see "Enforcing the contract" above) |
+| Deciding which slices / scorers / metrics to compute | Your evaluation protocol |
+
+## Anti-pattern to avoid
+
+**Do not compute bootstrap CIs / paired tests / calibration fits on
+the pod.** They're CPU-cheap; making the GPU pod do them shrinks your
+billed window for no upside, and (worse) couples re-evaluation cost to
+re-provisioning cost. If you find your config doing this during a
+template refactor, the lint test above catches it.
+
+**Do not skip the `required: true` flag on the predictions artifact.**
+If the pull fails silently (network blip, rsync race), your post-run
+metrics target will hit a missing file and you won't know whether the
+run succeeded. Marking the predictions parquet `required: true` turns
+a missed-pull into a loud failure that re-triggers the run; the few
+seconds of extra strictness saves the cost of an unnoticed silent
+regression.
 
 ## See also
 
