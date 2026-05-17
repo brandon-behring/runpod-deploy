@@ -10,10 +10,14 @@ from runpod_deploy import provider
 from runpod_deploy.config import build_job_context, load_job_spec
 from runpod_deploy.provider import (
     PodConnection,
+    StalePod,
     _wait_for_pod_ready,
+    bulk_delete_pods,
+    cleanup_pod,
+    list_stale_pods,
     provision_pod,
     run_json,
-    stop_pod,
+    try_resume_pod,
 )
 from tests.conftest import FakeResult, FakeSubprocess
 
@@ -170,6 +174,127 @@ def test_wait_for_pod_ready_tolerates_non_dict_payload(
     assert pod.host == "1.2.3.4"
 
 
+@pytest.mark.unit
+def test_wait_for_pod_ready_respects_custom_timeout_sec(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """The ``timeout_sec`` kwarg actually drives the deadline math.
+
+    Regression for Issue #88: if the timeout were hard-coded, a
+    `timeout_sec=120` request would still wait the old 240s.
+    """
+    # Time progression: 0 (deadline=120), 60 (still inside), 121 (past).
+    times = iter([0.0, 60.0, 121.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})))
+
+    with pytest.raises(RuntimeError, match="did not become SSH-ready in 120s"):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA RTX A4000", timeout_sec=120)
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_emits_progress_log_after_60s(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    job_ctx: Path,
+) -> None:
+    """Long waits emit a periodic INFO heartbeat so operators see progress.
+
+    Regression for Issue #88's user-experience concern: silent terminal
+    for up to 15 min was the original pain point.
+    """
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="runpod_deploy")
+    # Time progression (one time.time() per iteration after started_at):
+    #   started_at=0; iter1 now=90 (>=60 → emits log); iter2 now=950 (>=900 → breaks).
+    times = iter([0.0, 90.0, 950.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    payload = json.dumps(
+        {
+            "desiredStatus": "RUNNING",
+            "ssh": {"error": "pod not ready", "status": "RUNNING"},
+            "uptimeSeconds": 0,
+        }
+    )
+    fake_subprocess.enqueue(FakeResult(stdout=payload))
+
+    with pytest.raises(RuntimeError):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=900)
+
+    assert "waiting for SSH" in caplog.text
+    assert "T=90" in caplog.text
+    assert "pod-xyz" in caplog.text
+    assert "'pod not ready'" in caplog.text
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_emits_no_progress_log_before_60s(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    job_ctx: Path,
+) -> None:
+    """Fast pulls (<60s) stay silent — no spurious heartbeat."""
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="runpod_deploy")
+    # T=0 (inside; status still starting), T=999 (deadline expired).
+    times = iter([0.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})))
+
+    with pytest.raises(RuntimeError):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=120)
+
+    assert "waiting for SSH" not in caplog.text
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_error_message_omits_env_block(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """Timeout error keeps only {desiredStatus, ssh, uptimeSeconds}.
+
+    The old full-payload dump leaked SSH pubkeys (in payload['env']) and
+    was unreadable. Regression for the drive-by observability fix.
+    """
+    # started_at=0; iter1 now=10 (reads payload, populates last_payload);
+    # iter2 now=999 (>=120 → breaks; raises with trimmed last_payload).
+    times = iter([0.0, 10.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    payload = json.dumps(
+        {
+            "desiredStatus": "RUNNING",
+            "ssh": {"error": "pod not ready", "status": "RUNNING"},
+            "uptimeSeconds": 0,
+            # The noisy fields that USED to leak:
+            "env": {"PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...fakefakefake"},
+            "memoryInGb": 62,
+            "imageName": "runpod/pytorch:huge",
+        }
+    )
+    fake_subprocess.enqueue(FakeResult(stdout=payload))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=120)
+
+    msg = str(excinfo.value)
+    # Trimmed message must NOT leak env / SSH pubkeys / image name:
+    assert "PUBLIC_KEY" not in msg
+    assert "ssh-ed25519" not in msg
+    assert "imageName" not in msg
+    # Trimmed message MUST keep the diagnostic fields:
+    assert "desiredStatus" in msg
+    assert "pod not ready" in msg
+    assert "uptimeSeconds" in msg
+
+
 # ---------- provision_pod ----------
 
 
@@ -190,7 +315,13 @@ def test_provision_pod_writes_state_file_and_returns_connection(
     assert pod.pod_id == "pod-xyz"
     assert pod.host == "9.9.9.9"
     state = json.loads(ctx.spec.resolved_state_file.read_text())
-    assert state == {"pod_id": "pod-xyz", "gpu_id": "NVIDIA RTX A4000"}
+    assert state["pod_id"] == "pod-xyz"
+    assert state["gpu_id"] == "NVIDIA RTX A4000"
+    assert state["datacenter_id"] == "EU-RO-1"
+    # `image` is captured from ctx.spec.pod.image — assert presence (value
+    # is fixture-specific). The full schema is pinned by the Issue #90
+    # recycle tests below.
+    assert "image" in state and state["image"]
 
 
 @pytest.mark.unit
@@ -204,6 +335,41 @@ def test_provision_pod_raises_when_create_fails(
         provision_pod(
             ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
         )
+
+
+@pytest.mark.unit
+def test_provision_pod_deletes_orphan_when_wait_for_ssh_ready_fails(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """Regression test for the 2026-05-17 Phase 11 smoke discovery.
+
+    When ``runpodctl pod create`` succeeds but ``_wait_for_pod_ready``
+    times out (SSH never comes up), ``provision_pod`` must delete the
+    orphan pod before re-raising. Otherwise the pod is RUNNING and
+    billing at the GPU rate indefinitely, with no caller able to clean
+    up (the orchestrator's ``finally`` never gets a ``pod`` to act on).
+    """
+    # Freeze time so _wait_for_pod_ready exits the loop immediately.
+    times = iter([0.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(
+        FakeResult(stdout='{"id": "pod-orphan"}'),
+        # _wait_for_pod_ready polls pod get; return a non-RUNNING status once,
+        # then the deadline expires.
+        FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})),
+        # Orphan-cleanup pod delete must be issued and succeed.
+        FakeResult(returncode=0),
+    )
+    ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
+
+    with pytest.raises(RuntimeError, match="did not become SSH-ready"):
+        provision_pod(
+            ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+        )
+
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    assert delete_calls == [["runpodctl", "pod", "delete", "pod-orphan"]]
 
 
 @pytest.mark.unit
@@ -301,25 +467,95 @@ run:
     ), f"--name must not contain the raw template literal; got {name_value!r}"
 
 
-# ---------- stop_pod ----------
+# ---------- cleanup_pod ----------
 
 
 @pytest.mark.unit
-def test_stop_pod_calls_runpodctl_and_deletes_state_file(
+def test_cleanup_pod_delete_calls_runpodctl_pod_delete_and_unlinks_state(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    """Load-bearing regression test for the 2026-05-17 leak.
+
+    The success path MUST issue `runpodctl pod delete` (not `pod stop`)
+    and remove the state file. Pinning the literal argv prevents a
+    future refactor from silently reverting to the stop-only behavior.
+    """
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="delete", dry_run=False, state_file=state_file)
+
+    assert fake_subprocess.calls == [["runpodctl", "pod", "delete", "pod-xyz"]]
+    assert not state_file.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_pod_stop_calls_runpodctl_pod_stop_and_preserves_state(
     fake_subprocess: FakeSubprocess, tmp_path: Path
 ) -> None:
     state_file = tmp_path / "state.json"
     state_file.write_text("{}")
     fake_subprocess.enqueue(FakeResult(returncode=0))
 
-    stop_pod("pod-xyz", dry_run=False, state_file=state_file)
+    cleanup_pod("pod-xyz", action="stop", dry_run=False, state_file=state_file)
 
     assert fake_subprocess.calls == [["runpodctl", "pod", "stop", "pod-xyz"]]
-    assert not state_file.exists()
+    assert state_file.exists()
 
 
 @pytest.mark.unit
-def test_stop_pod_warns_but_does_not_raise_on_failure(
+def test_cleanup_pod_stop_logs_actionable_cleanup_command_with_cost_estimate(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Load-bearing regression test for the post-forensics cleanup nudge.
+
+    The WARNING emitted after `cleanup_pod(action="stop", ...)` MUST
+    contain:
+    - the literal string ``runpod-deploy cleanup --state-file`` so the
+      operator can copy-paste it,
+    - the literal string ``ls-stale`` so the operator knows about the
+      bulk-audit affordance,
+    - a dollar amount (``$/day``) computed from ``volume_in_gb``.
+
+    Pinning these strings prevents a refactor from silently dropping
+    the operator nudge that prevents the 2026-05-17 leak recurring.
+    """
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="stop", dry_run=False, state_file=state_file, volume_in_gb=50)
+
+    assert "runpod-deploy cleanup --state-file" in caplog.text
+    assert "ls-stale" in caplog.text
+    # 50 GB * $0.10/GB-mo / 30 = $0.1666... per day; tolerate float fmt.
+    assert "$0.17/day" in caplog.text or "$0.16/day" in caplog.text
+
+
+@pytest.mark.unit
+def test_cleanup_pod_preserve_is_noop_and_warns(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+
+    cleanup_pod("pod-xyz", action="preserve", dry_run=False, state_file=state_file)
+
+    assert fake_subprocess.calls == []
+    assert state_file.exists()
+    assert "preserved" in caplog.text
+    assert "runpodctl pod delete pod-xyz" in caplog.text
+
+
+@pytest.mark.unit
+def test_cleanup_pod_delete_warns_but_does_not_raise_on_failure(
     fake_subprocess: FakeSubprocess,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -329,20 +565,324 @@ def test_stop_pod_warns_but_does_not_raise_on_failure(
     state_file.write_text("{}")
     fake_subprocess.enqueue(FakeResult(returncode=2, stderr="not found"))
 
-    stop_pod("pod-xyz", dry_run=False, state_file=state_file)
+    cleanup_pod("pod-xyz", action="delete", dry_run=False, state_file=state_file)
 
-    assert "[warn] failed to stop pod pod-xyz" in caplog.text
+    assert "[warn] failed to delete pod pod-xyz" in caplog.text
+    # Failed delete must NOT unlink the state file (pod still exists).
     assert state_file.exists()
 
 
 @pytest.mark.unit
-def test_stop_pod_skips_subprocess_for_sentinel_pod_id(
+def test_cleanup_pod_skips_subprocess_for_sentinel_pod_id(
     fake_subprocess: FakeSubprocess, tmp_path: Path
 ) -> None:
     state_file = tmp_path / "state.json"
     state_file.write_text("{}")
 
-    stop_pod("<pod-id>", dry_run=False, state_file=state_file)
+    cleanup_pod("<pod-id>", action="delete", dry_run=False, state_file=state_file)
 
     assert fake_subprocess.calls == []
     assert state_file.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_pod_rejects_unknown_action() -> None:
+    with pytest.raises(ValueError, match="unknown action"):
+        cleanup_pod("pod-xyz", action="explode", dry_run=False)  # type: ignore[arg-type]
+
+
+# ---------- list_stale_pods / bulk_delete_pods ----------
+
+
+@pytest.mark.unit
+def test_list_stale_pods_parses_runpodctl_json(fake_subprocess: FakeSubprocess) -> None:
+    payload = json.dumps(
+        [
+            {"id": "abc123", "name": "smoke-old", "volumeInGb": 50, "uptimeSeconds": None},
+            {"id": "def456", "name": "bench-old", "volumeInGb": 100, "uptimeSeconds": 3600},
+        ]
+    )
+    fake_subprocess.enqueue(FakeResult(returncode=0, stdout=payload))
+
+    stale = list_stale_pods()
+
+    assert fake_subprocess.calls == [
+        ["runpodctl", "pod", "list", "--status", "EXITED", "-o", "json"]
+    ]
+    assert len(stale) == 2
+    assert stale[0] == StalePod(
+        pod_id="abc123",
+        name="smoke-old",
+        volume_in_gb=50,
+        age_hours=None,
+        estimated_daily_cost_usd=pytest.approx(50 * 0.10 / 30),
+    )
+    assert stale[1].age_hours == pytest.approx(1.0)
+    assert stale[1].estimated_daily_cost_usd == pytest.approx(100 * 0.10 / 30)
+
+
+@pytest.mark.unit
+def test_list_stale_pods_raises_on_non_json_output(fake_subprocess: FakeSubprocess) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=0, stdout="not json at all"))
+
+    with pytest.raises(RuntimeError, match="non-JSON output"):
+        list_stale_pods()
+
+
+@pytest.mark.unit
+def test_bulk_delete_pods_collects_failures_does_not_abort(
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+    fake_subprocess.enqueue(FakeResult(returncode=2, stderr="not found"))
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    results = bulk_delete_pods(["pod-a", "pod-b", "pod-c"], dry_run=False)
+
+    assert [argv[:4] for argv in fake_subprocess.calls] == [
+        ["runpodctl", "pod", "delete", "pod-a"],
+        ["runpodctl", "pod", "delete", "pod-b"],
+        ["runpodctl", "pod", "delete", "pod-c"],
+    ]
+    assert results[0] == ("pod-a", True, "")
+    assert results[1][0] == "pod-b" and results[1][1] is False and "not found" in results[1][2]
+    assert results[2] == ("pod-c", True, "")
+
+
+# ---------- cleanup_pod(action="recycle") + try_resume_pod (Issue #90) ----------
+
+
+def _write_recycle_state(
+    tmp_path: Path,
+    *,
+    pod_id: str = "pod-recycle",
+    gpu_id: str = "NVIDIA RTX A4000",
+    image: str = "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+    datacenter_id: str = "EU-RO-1",
+) -> Path:
+    """Helper: build a state-file matching the post-PR-89 recycle payload shape."""
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "pod_id": pod_id,
+                "gpu_id": gpu_id,
+                "image": image,
+                "datacenter_id": datacenter_id,
+            }
+        )
+    )
+    return state_file
+
+
+@pytest.mark.unit
+def test_cleanup_pod_recycle_issues_pod_stop_and_preserves_state(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    """Recycle path: same argv as `stop` (pause the pod), state-file preserved."""
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="recycle", dry_run=False, state_file=state_file)
+
+    assert fake_subprocess.calls == [["runpodctl", "pod", "stop", "pod-xyz"]]
+    assert state_file.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_pod_recycle_logs_recycled_info_not_forensics_warning(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The recycle log line MUST say 'recycled (paused for reuse on next run)'.
+
+    It must NOT emit the multi-line 'stopped for forensics' WARNING that
+    the `stop` action uses — that's an operator nudge for the failure
+    path, not the happy path.
+    """
+    caplog.set_level(logging.DEBUG, logger="runpod_deploy")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="recycle", dry_run=False, state_file=state_file)
+
+    assert "recycled (paused for reuse on next run)" in caplog.text
+    assert "stopped for forensics" not in caplog.text
+
+
+@pytest.mark.unit
+def test_try_resume_pod_returns_none_when_state_file_missing(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    """No state-file → no resume attempt (no subprocess call), returns None."""
+    state_file = tmp_path / "absent.json"
+    assert not state_file.exists()
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:test",
+        gpu_id="NVIDIA RTX A4000",
+        datacenter_id="EU-RO-1",
+    )
+
+    assert result is None
+    assert fake_subprocess.calls == []
+
+
+@pytest.mark.unit
+def test_try_resume_pod_returns_none_when_pod_not_exited(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If the pod is currently RUNNING (not paused), we don't touch it."""
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = _write_recycle_state(tmp_path)
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {}})))
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+        gpu_id="NVIDIA RTX A4000",
+        datacenter_id="EU-RO-1",
+    )
+
+    assert result is None
+    assert "desiredStatus='RUNNING'" in caplog.text
+    # We don't delete a RUNNING pod — operator may be using it.
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    assert delete_calls == []
+
+
+@pytest.mark.unit
+def test_try_resume_pod_resumes_compatible_pod(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Happy path: state-file matches current spec, pod EXITED → pod start fires."""
+    times = iter([0.0, 5.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    state_file = _write_recycle_state(tmp_path, pod_id="pod-recycle")
+    # Predicate-route the `pod get` calls so they all return EXITED first,
+    # then the post-start get returns RUNNING with SSH info.
+    pod_get_responses = iter(
+        [
+            FakeResult(
+                stdout=json.dumps({"desiredStatus": "EXITED", "ssh": {"error": "pod not ready"}})
+            ),
+            FakeResult(
+                stdout=json.dumps(
+                    {
+                        "desiredStatus": "RUNNING",
+                        "ssh": {"ip": "1.2.3.4", "port": 22033},
+                    }
+                )
+            ),
+        ]
+    )
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "get"],
+        FakeResult(),  # placeholder, overridden by enqueue below
+    )
+    # Override: use queue for pod get to step through statuses
+    fake_subprocess.matchers.clear()  # type: ignore[attr-defined]
+    fake_subprocess.enqueue(next(pod_get_responses))  # initial EXITED check
+    fake_subprocess.enqueue(FakeResult(returncode=0))  # pod start
+    fake_subprocess.enqueue(next(pod_get_responses))  # post-start RUNNING check
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+        gpu_id="NVIDIA RTX A4000",
+        datacenter_id="EU-RO-1",
+        ssh_ready_timeout_sec=60,
+    )
+
+    assert result is not None
+    assert result.pod_id == "pod-recycle"
+    assert result.host == "1.2.3.4"
+    assert result.port == 22033
+    start_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "start"]]
+    assert start_calls == [["runpodctl", "pod", "start", "pod-recycle"]]
+
+
+@pytest.mark.unit
+def test_try_resume_pod_deletes_stale_pod_on_image_drift(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Image drift → log WARNING with diff, delete stale pod, return None."""
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = _write_recycle_state(tmp_path, image="runpod/pytorch:OLD-IMAGE")
+    fake_subprocess.enqueue(
+        FakeResult(stdout=json.dumps({"desiredStatus": "EXITED", "ssh": {}})),
+        FakeResult(returncode=0),  # pod delete
+    )
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:NEW-IMAGE",
+        gpu_id="NVIDIA RTX A4000",
+        datacenter_id="EU-RO-1",
+    )
+
+    assert result is None
+    assert "drift detected" in caplog.text
+    assert "OLD-IMAGE" in caplog.text and "NEW-IMAGE" in caplog.text
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    assert delete_calls == [["runpodctl", "pod", "delete", "pod-recycle"]]
+    assert not state_file.exists()
+
+
+@pytest.mark.unit
+def test_try_resume_pod_deletes_stale_pod_on_gpu_drift(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = _write_recycle_state(tmp_path, gpu_id="NVIDIA RTX A4000")
+    fake_subprocess.enqueue(
+        FakeResult(stdout=json.dumps({"desiredStatus": "EXITED", "ssh": {}})),
+        FakeResult(returncode=0),
+    )
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+        gpu_id="NVIDIA L4",  # different
+        datacenter_id="EU-RO-1",
+    )
+
+    assert result is None
+    assert "drift detected" in caplog.text and "gpu_id" in caplog.text
+
+
+@pytest.mark.unit
+def test_try_resume_pod_deletes_stale_pod_on_datacenter_drift(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = _write_recycle_state(tmp_path, datacenter_id="EU-RO-1")
+    fake_subprocess.enqueue(
+        FakeResult(stdout=json.dumps({"desiredStatus": "EXITED", "ssh": {}})),
+        FakeResult(returncode=0),
+    )
+
+    result = try_resume_pod(
+        state_file=state_file,
+        image="runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+        gpu_id="NVIDIA RTX A4000",
+        datacenter_id="US-MD-1",  # different
+    )
+
+    assert result is None
+    assert "drift detected" in caplog.text and "datacenter_id" in caplog.text

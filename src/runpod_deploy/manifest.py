@@ -48,12 +48,17 @@ def build_pull_manifest(
     gpu_price_per_hour_usd: float | None = None,
     gpu_price_source: str | None = None,
     pod_final_state: str | None = None,
+    pod_resumed: bool = False,
 ) -> dict[str, Any]:
     """Build a v2 JSON-serializable pull manifest.
 
     All v2-only fields are keyword-only with defaults so legacy callers
     (those that only know ``failed`` and ``pod``) continue to work and
     emit a manifest with ``null`` placeholders for the new fields.
+
+    ``pod_resumed`` is ``True`` when this run reused a paused pod from
+    a previous ``lifecycle.on_success: recycle`` cycle, ``False`` when
+    the pod was freshly provisioned via ``runpodctl pod create``.
     """
     spec = ctx.spec
     by_label = {result.label: result for result in artifact_results}
@@ -71,6 +76,7 @@ def build_pull_manifest(
         "gpu_price_source": gpu_price_source,
         "pod_id": pod.pod_id if pod is not None else None,
         "pod_final_state": pod_final_state,
+        "pod_resumed": pod_resumed,
         "image": spec.pod.image,
         "cost_cap_usd": spec.budget.cost_cap_usd,
         "wall_time_sec": wall_time_sec,
@@ -135,6 +141,7 @@ def write_pull_manifest(
     gpu_price_per_hour_usd: float | None = None,
     gpu_price_source: str | None = None,
     pod_final_state: str | None = None,
+    pod_resumed: bool = False,
 ) -> Path:
     """Write the pull manifest into the run directory."""
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
@@ -151,6 +158,7 @@ def write_pull_manifest(
         gpu_price_per_hour_usd=gpu_price_per_hour_usd,
         gpu_price_source=gpu_price_source,
         pod_final_state=pod_final_state,
+        pod_resumed=pod_resumed,
     )
     path.write_text(json.dumps(payload, indent=2))
     return path

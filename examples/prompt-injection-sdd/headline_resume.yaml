@@ -36,6 +36,6 @@ artifacts:
     excludes:
       - _trainer/
       - fold_*/seed_*/checkpoint-*
-stop:
-  on_success: true
-  on_failure: false
+lifecycle:
+  on_success: delete
+  on_failure: preserve

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 import time
@@ -26,11 +28,12 @@ from runpod_deploy.config import (
 from runpod_deploy.manifest import ArtifactResult, write_pull_manifest
 from runpod_deploy.provider import (
     PodConnection,
+    cleanup_pod,
     provision_pod,
     resolve_volume,
     run_json,
     select_gpu_across_datacenters,
-    stop_pod,
+    try_resume_pod,
 )
 from runpod_deploy.telemetry import TelemetrySession
 from runpod_deploy.transport import RemoteRunner, RsyncTransfer
@@ -58,6 +61,8 @@ def run_job(
     max_gpu_price_usd: float | None = None,
     cli_variables: Mapping[str, str] | None = None,
     print_run_dir: bool = False,
+    ssh_ready_timeout_sec_override: int | None = None,
+    force_fresh: bool = False,
     fallback_cloud_type: str | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
@@ -95,17 +100,40 @@ def run_job(
             on_failover=_buffer_failover(pending_failover),
             max_gpu_price_usd=max_gpu_price_usd,
         )
-    volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
-    effective_fallback = _resolve_effective_fallback_cloud_type(spec, fallback_cloud_type)
-    pod, fallback_event = _provision_with_optional_fallback(
-        ctx,
-        volume_id=volume_id,
-        gpu_id=gpu_id,
-        datacenter_id=datacenter_id,
-        dry_run=dry_run,
-        primary_cloud_type=spec.pod.cloud_type,
-        fallback_cloud_type=effective_fallback,
+    ssh_ready_timeout_sec = (
+        ssh_ready_timeout_sec_override
+        if ssh_ready_timeout_sec_override is not None
+        else spec.budget.ssh_ready_timeout_sec
     )
+    pod: PodConnection | None = None
+    pod_resumed = False
+    fallback_event: dict[str, object] | None = None
+    if not dry_run and spec.lifecycle.on_success == "recycle":
+        if force_fresh:
+            _force_fresh_delete_stale(spec.resolved_state_file)
+        else:
+            pod = try_resume_pod(
+                state_file=spec.resolved_state_file,
+                image=spec.pod.image,
+                gpu_id=gpu_id,
+                datacenter_id=datacenter_id,
+                ssh_ready_timeout_sec=ssh_ready_timeout_sec,
+            )
+            if pod is not None:
+                pod_resumed = True
+    if pod is None:
+        volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
+        effective_fallback = _resolve_effective_fallback_cloud_type(spec, fallback_cloud_type)
+        pod, fallback_event = _provision_with_optional_fallback(
+            ctx,
+            volume_id=volume_id,
+            gpu_id=gpu_id,
+            datacenter_id=datacenter_id,
+            dry_run=dry_run,
+            ssh_ready_timeout_sec=ssh_ready_timeout_sec,
+            primary_cloud_type=spec.pod.cloud_type,
+            fallback_cloud_type=effective_fallback,
+        )
     runner = RemoteRunner(
         host=pod.host,
         port=pod.port,
@@ -125,6 +153,8 @@ def run_job(
     tel.emit_event("gpu_selected", gpu_id=gpu_id, datacenter_id=datacenter_id)
     if fallback_event is not None:
         tel.emit_event("cloud_type_fallback", **fallback_event)
+    if pod_resumed:
+        tel.emit_event("pod_resumed", pod_id=pod.pod_id, gpu_id=gpu_id, datacenter_id=datacenter_id)
     failed = False
     run_started = False
     artifact_results: list[ArtifactResult] = []
@@ -158,11 +188,14 @@ def run_job(
         raise
     finally:
         wall_time_sec = time.monotonic() - wall_start
-        should_stop = spec.stop.on_failure if failed else spec.stop.on_success
-        if should_stop:
-            stop_pod(pod.pod_id, dry_run=dry_run, state_file=spec.resolved_state_file)
-        elif not dry_run:
-            logger.warning(f"[warn] pod preserved: {pod.pod_id}")
+        action = spec.lifecycle.on_failure if failed else spec.lifecycle.on_success
+        cleanup_pod(
+            pod.pod_id,
+            action=action,
+            dry_run=dry_run,
+            state_file=spec.resolved_state_file,
+            volume_in_gb=spec.storage.volume_gb,
+        )
         if not dry_run:
             with contextlib.suppress(Exception):
                 write_pull_manifest(
@@ -177,6 +210,7 @@ def run_job(
                     gpu_price_per_hour_usd=tel.gpu_price_per_hour_usd,
                     gpu_price_source=tel.gpu_price_source,
                     pod_final_state=tel.pod_final_state,
+                    pod_resumed=pod_resumed,
                 )
 
 
@@ -218,6 +252,7 @@ def _provision_with_optional_fallback(
     gpu_id: str,
     datacenter_id: str,
     dry_run: bool,
+    ssh_ready_timeout_sec: int,
     primary_cloud_type: str,
     fallback_cloud_type: str | None,
 ) -> tuple[PodConnection, dict[str, object] | None]:
@@ -240,6 +275,7 @@ def _provision_with_optional_fallback(
             gpu_id=gpu_id,
             datacenter_id=datacenter_id,
             dry_run=dry_run,
+            ssh_ready_timeout_sec=ssh_ready_timeout_sec,
         )
         return pod, None
     except RuntimeError as exc:
@@ -256,6 +292,7 @@ def _provision_with_optional_fallback(
             gpu_id=gpu_id,
             datacenter_id=datacenter_id,
             dry_run=dry_run,
+            ssh_ready_timeout_sec=ssh_ready_timeout_sec,
             cloud_type_override=fallback_cloud_type,
         )
         fallback_event: dict[str, object] = {
@@ -265,6 +302,37 @@ def _provision_with_optional_fallback(
             "datacenter_id": datacenter_id,
         }
         return pod, fallback_event
+
+
+def _force_fresh_delete_stale(state_file: Path) -> None:
+    """Delete any paused pod referenced by ``state_file`` so --force-fresh
+    doesn't accumulate leftover recycled pods.
+
+    Reads the state-file (preserved by a previous ``recycle`` run); if a
+    pod_id is found, issues ``runpodctl pod delete`` (best-effort, logs
+    a WARNING on failure). Unlinks the state-file unconditionally so the
+    fresh-create path starts from a clean slate.
+    """
+    if not state_file.exists():
+        return
+    try:
+        payload = json.loads(state_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        state_file.unlink(missing_ok=True)
+        return
+    pod_id = str(payload.get("pod_id") or "") if isinstance(payload, dict) else ""
+    state_file.unlink(missing_ok=True)
+    if not pod_id:
+        return
+    argv = ["runpodctl", "pod", "delete", pod_id]
+    logger.info(f"[force-fresh] deleting stale recycled pod {pod_id!r}")
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        logger.warning(
+            f"[warn] force-fresh delete failed for {pod_id!r}: "
+            f"stdout={result.stdout} stderr={result.stderr}; "
+            f"release manually with: runpodctl pod delete {pod_id}"
+        )
 
 
 def _capture_deploy_metadata(spec: RunpodJobSpec, ctx: JobContext) -> dict[str, object]:

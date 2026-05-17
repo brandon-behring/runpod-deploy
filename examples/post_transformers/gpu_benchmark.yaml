@@ -33,6 +33,6 @@ artifacts:
   - label: bench-baselines
     remote_path: "{remote_repo}/bench/baselines/"
     local_path: "{project_root}/bench/baselines"
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop

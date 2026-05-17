@@ -42,7 +42,7 @@ and raises `ValueError` / `TypeError` with a diagnostic message.
    RunSpec
    CommandSpec
    SshSpec
-   StopPolicySpec
+   LifecyclePolicySpec
 
 .. rubric:: Staging, secrets, and artifacts
 

@@ -31,6 +31,10 @@ recipes/cost-reconciliation
 recipes/predictions-only-eval
 recipes/flash-attention-fallback
 recipes/reproducibility
+recipes/forensics-then-cleanup
+recipes/stale-pod-audit
+recipes/payload-reuse-via-network-volume
+recipes/recycle-pod-for-fast-iteration
 ```
 
 ## Examples
