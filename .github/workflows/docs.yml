@@ -14,7 +14,14 @@ name: Deploy docs
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # NOTE: deliberately NOT triggered on tag pushes. The GitHub-Pages
+    # environment's default "deployment branches" rule only allows
+    # deploys from `main`, so a tag push (e.g. `v0.8.0`) fails the
+    # deploy step. Every tag we push points at a commit that is
+    # already on main — so the main-branch push has already deployed
+    # the same content. Removing the tag trigger eliminates the
+    # spurious "failed deploy" run that would otherwise show up in
+    # the Actions tab on every release tag.
   pull_request:
     branches: [main]
     # PR builds run the `build` job only — `deploy` is gated by an
@@ -71,10 +78,11 @@ jobs:
 
   deploy:
     needs: build
-    # Deploy only from main + tag pushes. PR builds run `build` to
-    # gate doc-breaking changes but must NOT publish (PR head SHAs are
-    # untrusted from a Pages-permissions standpoint).
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    # Deploy only from main pushes. PR builds run `build` to gate
+    # doc-breaking changes but must NOT publish (PR head SHAs are
+    # untrusted from a Pages-permissions standpoint). Tag pushes are
+    # not triggered at all (see top-level `on:` comment).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
