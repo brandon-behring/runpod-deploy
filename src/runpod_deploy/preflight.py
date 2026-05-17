@@ -7,6 +7,8 @@ import fnmatch
 import logging
 import re
 import tomllib
+import urllib.error
+import urllib.request
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +21,7 @@ __all__ = [
     "DatacenterInventory",
     "InventoryReport",
     "check_gpu_availability",
+    "check_image_registry",
     "fetch_datacenter_payload",
     "report_gpu_inventory",
     "scan_consumer_pyproject",
@@ -573,3 +576,133 @@ def _has_torch_pinned(data: Mapping[str, Any]) -> bool:
     """True when [tool.uv.sources] has any explicit entry for torch."""
     sources = (data.get("tool") or {}).get("uv", {}).get("sources") or {}
     return isinstance(sources, Mapping) and "torch" in sources
+
+
+_DOCKER_HUB_TAG_URL = "https://hub.docker.com/v2/repositories/{owner}/{image}/tags/{tag}/"
+_REGISTRY_CHECK_TIMEOUT_SEC = 5.0
+_REGISTRY_CHECK_CACHE: dict[str, tuple[str, str | None]] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class _DockerImageRef:
+    """Parsed Docker image reference (Docker Hub only).
+
+    Non-Docker-Hub registries (any image string with an explicit
+    ``<host>/`` prefix containing ``.`` or ``:``) parse to ``None``;
+    they are skipped with an INFO log because we have no portable
+    cross-registry tag API.
+    """
+
+    owner: str
+    image: str
+    tag: str
+
+
+def _parse_docker_image(image: str) -> _DockerImageRef | None:
+    """Parse ``<owner>/<image>:<tag>``-style Docker Hub references.
+
+    Returns None for non-Docker-Hub registries (detected by a leading
+    ``<host>/`` prefix where ``<host>`` contains ``.`` or ``:``). Tags
+    default to ``latest`` when omitted; library images
+    (``python:3.11``) default the owner to ``library``.
+    """
+    if not image:
+        return None
+    head, _, rest = image.partition("/")
+    if rest and ("." in head or ":" in head):
+        return None
+    if rest:
+        owner = head
+        name_with_tag = rest
+    else:
+        owner = "library"
+        name_with_tag = image
+    if "/" in name_with_tag:
+        return None
+    name, sep, tag = name_with_tag.partition(":")
+    if not name:
+        return None
+    return _DockerImageRef(owner=owner, image=name, tag=tag if sep else "latest")
+
+
+def _check_docker_hub_tag(ref: _DockerImageRef) -> tuple[str, str | None]:
+    """HEAD-check a Docker Hub tag. Returns ``(status, detail)``.
+
+    Status is one of ``"ok"`` (200), ``"missing"`` (404), or
+    ``"unknown"`` (any other outcome — typically offline / rate-limit /
+    timeout). The detail is a short diagnostic string for non-200
+    outcomes; ``None`` on success.
+    """
+    url = _DOCKER_HUB_TAG_URL.format(owner=ref.owner, image=ref.image, tag=ref.tag)
+    req = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=_REGISTRY_CHECK_TIMEOUT_SEC) as resp:
+            code = resp.getcode()
+            if code == 200:
+                return ("ok", None)
+            return ("unknown", f"HTTP {code}")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return ("missing", "HTTP 404")
+        return ("unknown", f"HTTP {exc.code}")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        return ("unknown", f"network: {exc}")
+
+
+def check_image_registry(ctx: JobContext) -> None:
+    """HEAD-check ``pod.image`` against Docker Hub.
+
+    Catches phantom tags that pass schema validation today but get
+    stuck in image-pull-backoff on the pod (RunPod's API accepts any
+    image string at ``pod create`` time). Off by default for offline /
+    CI scenarios — opt in via ``runpod-deploy validate --all`` or
+    ``runpod-deploy validate --check-image-registry``.
+
+    Outcomes:
+
+    - 200 → INFO ``ok: image <name> exists on Docker Hub``
+    - 404 → WARNING with the literal $0.62 cost-evidence pointer
+    - other (offline, rate-limit, non-Docker-Hub host) → INFO; do not
+      block the run
+
+    Results are cached per-process so multiple validate calls in the
+    same Python session (sweep harness, pytest) only HEAD the
+    registry once per unique image string.
+    """
+    image = ctx.spec.pod.image
+    if not image:
+        return
+    cached = _REGISTRY_CHECK_CACHE.get(image)
+    if cached is not None:
+        status, detail = cached
+    else:
+        ref = _parse_docker_image(image)
+        if ref is None:
+            logger.info(
+                f"[image-registry] {image!r}: not on Docker Hub "
+                "(non-default registry or malformed tag) — skip"
+            )
+            _REGISTRY_CHECK_CACHE[image] = ("skipped", None)
+            return
+        status, detail = _check_docker_hub_tag(ref)
+        _REGISTRY_CHECK_CACHE[image] = (status, detail)
+    if status == "ok":
+        logger.info(f"[image-registry] ok: {image!r} exists on Docker Hub")
+    elif status == "missing":
+        logger.warning(
+            f"[image-registry] {image!r} does NOT exist on Docker Hub "
+            "(HEAD returned 404). RunPod's API accepts any image string at "
+            "pod-create time, so the pod will provision but stay stuck in "
+            "image-pull-backoff with `uptimeSeconds: 0` and `ssh.error: pod "
+            "not ready` indefinitely (~$0.30/pod burned before diagnosis on "
+            "consumer-reported 2026-05-17 incident). Fix the tag before "
+            "running. Pass --skip-registry-check to suppress this check."
+        )
+    elif status == "skipped":
+        pass
+    else:
+        logger.info(
+            f"[image-registry] could not verify {image!r} on Docker Hub "
+            f"({detail}) — likely offline / behind a firewall / rate-limited. "
+            "Pass --skip-registry-check to silence this in CI."
+        )

@@ -15,6 +15,30 @@ This project follows Semantic Versioning.
   the silent-hang foot-gun that PR #93 surfaced as a doc fix. Resolves
   #94.
 
+#### Pre-flight image-registry check (closes #97)
+
+- **`runpod-deploy validate --check-image-registry`** — HEAD-checks
+  `pod.image` against Docker Hub's tags API
+  (`https://hub.docker.com/v2/repositories/<owner>/<image>/tags/<tag>/`).
+  A 404 emits a loud WARNING with the literal phantom-tag string and a
+  pointer to the consumer-reported 2026-05-17 incident
+  (~$0.62 burned on `runpod/pytorch:2.5.0-py3.13-cuda12.4.1-cudnn9-devel`
+  before diagnosis). Also wired into `--all`. Resolves #97.
+- **`runpod-deploy validate --skip-registry-check`** — opt-out for
+  offline / CI scenarios where Docker Hub is unreachable. Also
+  suppresses the registry portion of `--all`.
+- **`preflight.check_image_registry(ctx)`** — Python API entry point;
+  results are cached per-process so repeat invocations in the same
+  Python session (sweep harness, pytest) only HEAD the registry once
+  per unique image string.
+- **Non-Docker-Hub registries** (any image string with a leading
+  `<host>/` prefix containing `.` or `:`, e.g. `ghcr.io/...`) are
+  detected and skipped with an INFO log — we have no portable
+  cross-registry tag API and surface a soft "could not verify"
+  signal instead.
+- **Troubleshooting entry**:
+  [`docs/source/troubleshooting.md` — "Pod stuck at uptimeSeconds: 0 forever — phantom image tag"](docs/source/troubleshooting.md).
+
 #### Lifecycle redesign (closes #88, #90)
 
 - **`lifecycle:` config block** with three-valued actions

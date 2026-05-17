@@ -161,6 +161,8 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if args.all or args.scan_consumer:
         preflight.scan_consumer_pyproject(ctx)
         preflight.scan_staged_payloads_for_absolute_paths(ctx)
+    if (args.all or args.check_image_registry) and not args.skip_registry_check:
+        preflight.check_image_registry(ctx)
     logger.info(f"ok: {args.config} schema_version={spec.schema_version} job={spec.name}")
     return 0
 
@@ -960,9 +962,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Scan consumer pyproject.toml + staged payloads for common foot-guns.",
     )
     validate_parser.add_argument(
+        "--check-image-registry",
+        action="store_true",
+        help=(
+            "HEAD-check pod.image against Docker Hub. Catches phantom tags that "
+            "RunPod's API accepts at pod-create time but get stuck in image-pull-backoff."
+        ),
+    )
+    validate_parser.add_argument(
+        "--skip-registry-check",
+        action="store_true",
+        help=(
+            "Suppress --check-image-registry (and the registry portion of --all). "
+            "Useful for offline / CI environments where Docker Hub is unreachable."
+        ),
+    )
+    validate_parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable every opt-in check (--check-local, --check-availability, --scan-consumer).",
+        help=(
+            "Enable every opt-in check (--check-local, --check-availability, "
+            "--scan-consumer, --check-image-registry)."
+        ),
     )
 
     run_parser = sub.add_parser("run", parents=[verbosity], help="Run a job config.")
