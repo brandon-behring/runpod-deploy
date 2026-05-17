@@ -20,13 +20,30 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 __all__ = [
+    "VOLUME_STORAGE_USD_PER_GB_MONTH",
     "GpuPrice",
+    "estimate_volume_storage_cost_usd_per_day",
     "fetch_gpu_prices",
     "select_price_for_pod",
 ]
+
+VOLUME_STORAGE_USD_PER_GB_MONTH: Final[float] = 0.10
+"""RunPod's standard preserved-volume rate per GB per month (2026)."""
+
+
+def estimate_volume_storage_cost_usd_per_day(volume_in_gb: int) -> float:
+    """Estimate daily volume-disk storage cost for a stopped/preserved pod.
+
+    Uses :data:`VOLUME_STORAGE_USD_PER_GB_MONTH` and divides by 30 days.
+    Returns 0.0 for ``volume_in_gb <= 0``.
+    """
+    if volume_in_gb <= 0:
+        return 0.0
+    return volume_in_gb * VOLUME_STORAGE_USD_PER_GB_MONTH / 30.0
+
 
 logger = logging.getLogger(__name__)
 

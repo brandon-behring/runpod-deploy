@@ -11,15 +11,24 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from runpod_deploy.config import STORAGE_EPHEMERAL, STORAGE_NETWORK_VOLUME, JobContext
+from runpod_deploy.config import (
+    STORAGE_EPHEMERAL,
+    STORAGE_NETWORK_VOLUME,
+    JobContext,
+    LifecycleAction,
+)
+from runpod_deploy.pricing import estimate_volume_storage_cost_usd_per_day
 from runpod_deploy.transport import log_cmd
 
 __all__ = [
     "PodConnection",
+    "StalePod",
+    "bulk_delete_pods",
+    "cleanup_pod",
+    "list_stale_pods",
     "resolve_volume",
     "run_json",
     "select_gpu_across_datacenters",
-    "stop_pod",
 ]
 
 logger = logging.getLogger(__name__)
@@ -321,7 +330,23 @@ def provision_pod(
     pod_id = str(payload.get("id") or payload.get("podId") or "")
     if not pod_id:
         raise RuntimeError(f"pod create returned no pod id: {payload}")
-    pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id)
+    try:
+        pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id)
+    except Exception:
+        logger.warning(
+            f"[lifecycle] pod {pod_id!r} failed to reach SSH-ready; "
+            f"deleting to release compute + disk billing before re-raising"
+        )
+        delete_argv = ["runpodctl", "pod", "delete", pod_id]
+        log_cmd(logger, "runpodctl", delete_argv)
+        delete_result = subprocess.run(delete_argv, capture_output=True, text=True, check=False)
+        if delete_result.returncode != 0:
+            logger.warning(
+                f"[warn] orphan-pod delete failed for {pod_id!r}: "
+                f"stdout={delete_result.stdout} stderr={delete_result.stderr}; "
+                f"release manually with: runpodctl pod delete {pod_id}"
+            )
+        raise
     state_file = ctx.spec.resolved_state_file
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps({"pod_id": pod.pod_id, "gpu_id": gpu_id}, indent=2))
@@ -349,19 +374,211 @@ def _wait_for_pod_ready(pod_id: str, *, gpu_id: str) -> PodConnection:
     raise RuntimeError(f"pod {pod_id} did not become SSH-ready; last={last_payload}")
 
 
-def stop_pod(pod_id: str, *, dry_run: bool, state_file: Path | None = None) -> None:
-    """Stop a RunPod pod and optionally clear its state file."""
-    argv = ["runpodctl", "pod", "stop", pod_id]
-    log_cmd(logger, "runpodctl", argv)
-    if dry_run or pod_id == "<pod-id>":
+@dataclass(frozen=True, slots=True)
+class StalePod:
+    """A RunPod pod in EXITED status that is still accruing volume storage."""
+
+    pod_id: str
+    name: str
+    volume_in_gb: int
+    age_hours: float | None
+    estimated_daily_cost_usd: float
+
+
+def cleanup_pod(
+    pod_id: str,
+    *,
+    action: LifecycleAction,
+    dry_run: bool,
+    state_file: Path | None = None,
+    volume_in_gb: int | None = None,
+) -> None:
+    """Take a lifecycle action on a pod after a run completes.
+
+    Three actions:
+
+    * ``"preserve"`` — leave the pod alone; compute and disk continue
+      billing. Logs a WARNING with the manual-release command.
+    * ``"stop"`` — issue ``runpodctl pod stop``; compute stops, **volume
+      disk continues billing at ~$0.10/GB·month indefinitely** until
+      released. Logs a multi-line actionable WARNING with estimated
+      ``$/day`` cost (if ``volume_in_gb`` supplied) and the exact
+      ``runpod-deploy cleanup`` command. State file is preserved so the
+      operator can release the pod by name later.
+    * ``"delete"`` — issue ``runpodctl pod delete``; compute stops and
+      volume disk is released. State file is removed on success.
+
+    The sentinel ``pod_id == "<pod-id>"`` (used by offline dry-runs)
+    short-circuits all subprocess calls.
+
+    Raises:
+        ValueError: if ``action`` is not in
+            :data:`runpod_deploy.config.LIFECYCLE_ACTIONS`.
+    """
+    if action == "preserve":
+        logger.warning(
+            f"[lifecycle] pod {pod_id!r} preserved "
+            f"(compute + disk continue billing); "
+            f"release manually with: runpodctl pod delete {pod_id}"
+        )
         return
+
+    if action == "stop":
+        argv = ["runpodctl", "pod", "stop", pod_id]
+        log_cmd(logger, "runpodctl", argv)
+        if not (dry_run or pod_id == "<pod-id>"):
+            result = subprocess.run(argv, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                logger.warning(
+                    f"[warn] failed to stop pod {pod_id}: "
+                    f"stdout={result.stdout} stderr={result.stderr}"
+                )
+                return
+        _log_stop_cleanup_nudge(pod_id, state_file=state_file, volume_in_gb=volume_in_gb)
+        return
+
+    if action == "delete":
+        argv = ["runpodctl", "pod", "delete", pod_id]
+        log_cmd(logger, "runpodctl", argv)
+        if dry_run or pod_id == "<pod-id>":
+            return
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.warning(
+                f"[warn] failed to delete pod {pod_id}: "
+                f"stdout={result.stdout} stderr={result.stderr}"
+            )
+            return
+        if state_file is not None:
+            state_file.unlink(missing_ok=True)
+        logger.info(f"[lifecycle] pod {pod_id!r} deleted; volume disk released")
+        return
+
+    raise ValueError(
+        f"cleanup_pod: unknown action {action!r}; expected 'preserve', 'stop', or 'delete'"
+    )
+
+
+def _log_stop_cleanup_nudge(
+    pod_id: str,
+    *,
+    state_file: Path | None,
+    volume_in_gb: int | None,
+) -> None:
+    """Emit the multi-line WARNING that nudges the operator to clean up.
+
+    This message is a regression-tested operator contract: it MUST
+    contain the literal ``runpod-deploy cleanup --state-file`` command
+    so the operator never has to remember the cleanup syntax after a
+    failed run.
+    """
+    lines = [f"[lifecycle] pod {pod_id!r} stopped for forensics."]
+    if volume_in_gb is not None and volume_in_gb > 0:
+        daily = estimate_volume_storage_cost_usd_per_day(volume_in_gb)
+        lines.append(
+            f"  Volume disk ({volume_in_gb} GB) continues billing at "
+            f"~${daily:.2f}/day (~${daily * 30:.2f}/mo) until released."
+        )
+    else:
+        lines.append("  Volume disk continues billing until released.")
+    lines.append("  When done investigating, release with:")
+    if state_file is not None:
+        lines.append(f"      runpod-deploy cleanup --state-file {state_file} --mode delete")
+    else:
+        lines.append(f"      runpodctl pod delete {pod_id}")
+    lines.append("  Or audit all stale pods:")
+    lines.append("      runpod-deploy ls-stale")
+    logger.warning("\n".join(lines))
+
+
+def list_stale_pods() -> list[StalePod]:
+    """List every pod in EXITED status with its volume size and estimated daily cost.
+
+    Shells out to ``runpodctl pod list -a --status EXITED -o json`` and
+    parses the JSON array. Returns an empty list if no pods are stale.
+
+    Raises:
+        RuntimeError: if ``runpodctl`` exits non-zero or returns
+            non-JSON output.
+    """
+    argv = ["runpodctl", "pod", "list", "--status", "EXITED", "-o", "json"]
+    log_cmd(logger, "runpodctl", argv)
     result = subprocess.run(argv, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        logger.warning(
-            f"[warn] failed to stop pod {pod_id}: stdout={result.stdout} stderr={result.stderr}"
+        raise RuntimeError(
+            f"runpodctl pod list failed: stdout={result.stdout} stderr={result.stderr}"
         )
-    elif state_file is not None:
-        state_file.unlink(missing_ok=True)
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"runpodctl pod list returned non-JSON output: {result.stdout!r}"
+        ) from exc
+    if not isinstance(payload, list):
+        raise RuntimeError(
+            f"runpodctl pod list expected a JSON array, got {type(payload).__name__}"
+        )
+    out: list[StalePod] = []
+    for raw in payload:
+        if not isinstance(raw, Mapping):
+            continue
+        pod_id = str(raw.get("id") or "")
+        if not pod_id:
+            continue
+        volume_in_gb = int(raw.get("volumeInGb") or 0)
+        age_hours = _age_hours_from_uptime(raw.get("uptimeSeconds"))
+        out.append(
+            StalePod(
+                pod_id=pod_id,
+                name=str(raw.get("name") or ""),
+                volume_in_gb=volume_in_gb,
+                age_hours=age_hours,
+                estimated_daily_cost_usd=estimate_volume_storage_cost_usd_per_day(volume_in_gb),
+            )
+        )
+    return out
+
+
+def _age_hours_from_uptime(value: Any) -> float | None:
+    """Convert a ``uptimeSeconds`` field (int|None) to age in hours."""
+    if value is None:
+        return None
+    try:
+        return float(value) / 3600.0
+    except (TypeError, ValueError):
+        return None
+
+
+def bulk_delete_pods(
+    pod_ids: Sequence[str],
+    *,
+    dry_run: bool,
+) -> list[tuple[str, bool, str]]:
+    """Delete each pod in turn; collect failures rather than aborting on first.
+
+    Returns a list of ``(pod_id, success, message)`` triples. ``message``
+    is empty on success and contains stderr (truncated) on failure.
+
+    The dry-run mode logs each ``runpodctl pod delete`` argv and returns
+    success for all entries without invoking subprocess.
+    """
+    results: list[tuple[str, bool, str]] = []
+    for pod_id in pod_ids:
+        argv = ["runpodctl", "pod", "delete", pod_id]
+        log_cmd(logger, "runpodctl", argv)
+        if dry_run or pod_id == "<pod-id>":
+            results.append((pod_id, True, ""))
+            continue
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        if result.returncode == 0:
+            results.append((pod_id, True, ""))
+        else:
+            msg = (result.stderr or result.stdout or "").strip()
+            if len(msg) > 200:
+                msg = msg[:200] + "…"
+            logger.warning(f"[warn] failed to delete pod {pod_id}: {msg}")
+            results.append((pod_id, False, msg))
+    return results
 
 
 def run_json(argv: list[str]) -> Any:

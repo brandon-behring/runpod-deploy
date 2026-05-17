@@ -108,12 +108,14 @@ run:
     nvidia-smi
     echo "[smoke] DONE"
 
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete       # release volume disk on success (default)
+  on_failure: stop         # preserve paused for SSH forensics (default)
 ```
 
 Every section is documented in [`config-reference.md`](config-reference.md).
+For the cost trade-offs in the `lifecycle:` block, see
+[`lifecycle.md` §7b](lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics).
 
 ---
 

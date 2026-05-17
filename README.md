@@ -23,7 +23,9 @@ runpod-deploy run --config examples/hello/hello.yaml --offline-dry-run
 runpod-deploy validate --config examples/smoke/a4000_smoke.yaml
 runpod-deploy run --config examples/smoke/a4000_smoke.yaml --offline-dry-run
 runpod-deploy logs --config examples/smoke/a4000_smoke.yaml          # live-tail the active pod's run log
-runpod-deploy stop --state-file ~/.runpod-smoke-current               # stop the active pod
+runpod-deploy cleanup --state-file ~/.runpod-smoke-current            # release the active pod's volume disk
+runpod-deploy ls-stale                                                # audit every EXITED pod + estimated $/day
+runpod-deploy cleanup --all-stopped --yes                             # bulk-release every paused pod
 ```
 
 `--offline-dry-run` prints the provision/stage/launch/pull/stop command shape

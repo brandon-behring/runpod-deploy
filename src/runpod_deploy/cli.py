@@ -26,7 +26,14 @@ from runpod_deploy.config import (
     validate_local_paths,
 )
 from runpod_deploy.orchestrator import run_job
-from runpod_deploy.provider import run_json, select_gpu_across_datacenters, stop_pod
+from runpod_deploy.provider import (
+    StalePod,
+    bulk_delete_pods,
+    cleanup_pod,
+    list_stale_pods,
+    run_json,
+    select_gpu_across_datacenters,
+)
 from runpod_deploy.transport import RemoteRunner
 
 __all__ = ["main"]
@@ -746,15 +753,124 @@ def _format_manifest_summary(m: dict[str, object]) -> str:
     return "\n".join(lines)
 
 
-def _cmd_stop(args: argparse.Namespace) -> int:
+def _cmd_cleanup(args: argparse.Namespace) -> int:
+    """Cleanup a pod (single-pod) or every stopped pod (bulk).
+
+    Single mode (``--state-file``): reads pod_id from the state file and
+    calls :func:`runpod_deploy.provider.cleanup_pod` with ``--mode``.
+    Bulk mode (``--all-stopped``): lists every EXITED pod, prints an
+    inventory, and (after a y/N prompt unless ``--yes``) deletes them.
+    """
+    if args.all_stopped:
+        return _cleanup_all_stopped(args)
+    if args.state_file is None:
+        raise RuntimeError("cleanup requires --state-file <path> or --all-stopped")
+    return _cleanup_single(args)
+
+
+def _cleanup_single(args: argparse.Namespace) -> int:
     if not args.state_file.exists():
         raise FileNotFoundError(f"state file not found: {args.state_file}")
     payload = json.loads(args.state_file.read_text())
     pod_id = str(payload.get("pod_id") or payload.get("id") or payload.get("podId") or "")
     if not pod_id:
         raise RuntimeError(f"state file has no pod id: {args.state_file}")
-    stop_pod(pod_id, dry_run=bool(args.dry_run), state_file=args.state_file)
+    cleanup_pod(
+        pod_id,
+        action=args.mode,
+        dry_run=bool(args.dry_run),
+        state_file=args.state_file,
+    )
     return 0
+
+
+def _cleanup_all_stopped(args: argparse.Namespace) -> int:
+    stale = list_stale_pods()
+    if not stale:
+        logger.info("[cleanup] no stale (EXITED) pods found; nothing to do")
+        return 0
+    _print_stale_table(stale)
+    if not args.yes:
+        sys.stderr.write(f"\nDelete all {len(stale)} pods? [y/N] ")
+        sys.stderr.flush()
+        answer = sys.stdin.readline().strip().lower()
+        if answer not in {"y", "yes"}:
+            logger.info("[cleanup] aborted by user; no pods deleted")
+            return 1
+    pod_ids = [p.pod_id for p in stale]
+    results = bulk_delete_pods(pod_ids, dry_run=bool(args.dry_run))
+    successes = sum(1 for _, ok, _ in results if ok)
+    failures = len(results) - successes
+    logger.info(f"[cleanup] deleted: {successes}; failed: {failures}")
+    if failures:
+        for pod_id, ok, msg in results:
+            if not ok:
+                logger.warning(f"[cleanup] failed {pod_id}: {msg}")
+        return 2
+    return 0
+
+
+def _cmd_ls_stale(args: argparse.Namespace) -> int:
+    """List every EXITED pod with estimated daily storage cost."""
+    if args.json:
+        # JSON output mode: silence INFO logs so stdout is pure JSON.
+        logging.getLogger("runpod_deploy").setLevel(logging.WARNING)
+    stale = list_stale_pods()
+    if args.json:
+        sys.stdout.write(
+            json.dumps(
+                [
+                    {
+                        "pod_id": p.pod_id,
+                        "name": p.name,
+                        "volume_in_gb": p.volume_in_gb,
+                        "age_hours": p.age_hours,
+                        "estimated_daily_cost_usd": round(p.estimated_daily_cost_usd, 4),
+                    }
+                    for p in stale
+                ],
+                indent=2,
+            )
+            + "\n"
+        )
+        return 0
+    if not stale:
+        sys.stdout.write("No stale (EXITED) pods.\n")
+        return 0
+    _print_stale_table(stale)
+    return 0
+
+
+def _print_stale_table(stale: Sequence[StalePod]) -> None:
+    """Print a human-readable table of stale pods plus a TOTAL footer."""
+    header = f"{'POD_ID':<16} {'NAME':<40} {'GB':>6} {'$/day':>8} {'$/mo':>8}"
+    sys.stdout.write(header + "\n")
+    sys.stdout.write("-" * len(header) + "\n")
+    total_daily = 0.0
+    for p in stale:
+        name = p.name if len(p.name) <= 40 else p.name[:37] + "..."
+        sys.stdout.write(
+            f"{p.pod_id:<16} {name:<40} {p.volume_in_gb:>6} "
+            f"{p.estimated_daily_cost_usd:>8.2f} {p.estimated_daily_cost_usd * 30:>8.2f}\n"
+        )
+        total_daily += p.estimated_daily_cost_usd
+    sys.stdout.write("-" * len(header) + "\n")
+    sys.stdout.write(
+        f"TOTAL: {len(stale)} pods, " f"${total_daily:.2f}/day (~${total_daily * 30:.2f}/mo)\n"
+    )
+
+
+def _cmd_stop_deprecated(args: argparse.Namespace) -> int:
+    """Deprecated alias for `cleanup --mode stop`."""
+    logger.warning(
+        "[deprecated] 'runpod-deploy stop' is deprecated; "
+        "use 'runpod-deploy cleanup --state-file <path> --mode stop' instead. "
+        "See docs/source/migration-v3.md."
+    )
+    args.mode = "stop"
+    args.all_stopped = False
+    args.yes = False
+    return _cmd_cleanup(args)
 
 
 def _cmd_logs(args: argparse.Namespace) -> int:
@@ -865,7 +981,65 @@ def main(argv: Sequence[str] | None = None) -> int:
         "docs/recipes/multi-config-sweep.md).",
     )
 
-    stop_parser = sub.add_parser("stop", parents=[verbosity], help="Stop a pod from a state file.")
+    cleanup_parser = sub.add_parser(
+        "cleanup",
+        parents=[verbosity],
+        help=(
+            "Release a pod's volume disk. Single mode with --state-file; "
+            "bulk mode with --all-stopped (releases every EXITED pod)."
+        ),
+    )
+    cleanup_target = cleanup_parser.add_mutually_exclusive_group(required=True)
+    cleanup_target.add_argument(
+        "--state-file",
+        type=Path,
+        default=None,
+        help="State file pointing to a single pod to act on.",
+    )
+    cleanup_target.add_argument(
+        "--all-stopped",
+        action="store_true",
+        help=(
+            "Delete every EXITED pod on the account. Prompts for "
+            "confirmation unless --yes is passed."
+        ),
+    )
+    cleanup_parser.add_argument(
+        "--mode",
+        choices=("preserve", "stop", "delete"),
+        default="delete",
+        help=(
+            "Lifecycle action for --state-file mode (default: delete). "
+            "Ignored in --all-stopped mode (always deletes)."
+        ),
+    )
+    cleanup_parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the y/N prompt in --all-stopped mode.",
+    )
+    cleanup_parser.add_argument("--dry-run", action="store_true")
+
+    ls_stale_parser = sub.add_parser(
+        "ls-stale",
+        parents=[verbosity],
+        help=(
+            "List EXITED pods with estimated daily/monthly storage cost. "
+            "Read-only; pair with `cleanup --all-stopped` to release."
+        ),
+    )
+    ls_stale_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit machine-readable JSON instead of a table.",
+    )
+
+    stop_parser = sub.add_parser(
+        "stop",
+        parents=[verbosity],
+        help="DEPRECATED: use `cleanup --state-file ... --mode stop` instead.",
+    )
     stop_parser.add_argument("--state-file", type=Path, required=True)
     stop_parser.add_argument("--dry-run", action="store_true")
 
@@ -1058,7 +1232,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     handlers = {
         "validate": _cmd_validate,
         "run": _cmd_run,
-        "stop": _cmd_stop,
+        "cleanup": _cmd_cleanup,
+        "ls-stale": _cmd_ls_stale,
+        "stop": _cmd_stop_deprecated,
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
         "gpu-prices": _cmd_gpu_prices,

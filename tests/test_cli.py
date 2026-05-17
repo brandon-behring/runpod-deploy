@@ -88,7 +88,8 @@ artifacts:
     assert "--gpu-id 'NVIDIA A100-SXM4-80GB'" in caplog.text
     assert "rsync-push:repo" in caplog.text
     assert "ssh-detached" in caplog.text
-    assert "runpodctl pod stop" in caplog.text
+    # New default lifecycle.on_success == "delete" — releases volume disk.
+    assert "runpodctl pod delete" in caplog.text
 
 
 @pytest.mark.unit

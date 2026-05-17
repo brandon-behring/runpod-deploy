@@ -80,10 +80,32 @@ artifacts:                            # optional list; pulled after the run
     local_path: "{project_root}/results/"
     required: true
 
-stop:                                 # optional block (defaults: both true)
-  on_success: true
-  on_failure: true
+lifecycle:                            # optional; defaults shown below
+  on_success: delete                  # release volume disk on success
+  on_failure: stop                    # preserve paused pod for SSH forensics
 ```
+
+### `lifecycle:` actions
+
+Each of `on_success` / `on_failure` accepts one of three strings:
+
+- `delete` — call `runpodctl pod delete`. Tears down both compute
+  and volume disk. **Default for `on_success`.** Use this on the
+  failure path too if you don't need SSH forensics.
+- `stop` — call `runpodctl pod stop`. Pauses compute, but
+  **volume disk continues billing at ~$0.10/GB·month indefinitely**
+  until released. **Default for `on_failure`.** Pair with
+  `runpod-deploy cleanup --state-file <path> --mode delete` once
+  forensics is complete. See
+  [`lifecycle.md` §7b "Cost discipline"](lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics).
+- `preserve` — no-op. Pod keeps running and bills full GPU rate.
+  Rare; useful only if you intend to SSH in immediately after the
+  job completes.
+
+The legacy bool form (`stop: {on_success: true, on_failure: true}`)
+is still accepted with a deprecation warning. See
+[`migration-v3.md`](migration-v3.md) for the mapping and migration
+path.
 
 ## Required top-level fields
 

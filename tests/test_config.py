@@ -361,3 +361,69 @@ run:
 """)
     with pytest.raises(ValueError, match="pod.python_version must match"):
         load_job_spec(config)
+
+
+# ---------- lifecycle policy parser (Phase 2 of pod-lifecycle fix) ----------
+
+
+@pytest.mark.unit
+def test_load_job_spec_default_lifecycle_is_delete_on_success_stop_on_failure(
+    tmp_path: Path,
+) -> None:
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    spec = load_job_spec(config)
+    assert spec.lifecycle.on_success == "delete"
+    assert spec.lifecycle.on_failure == "stop"
+
+
+@pytest.mark.unit
+def test_load_job_spec_accepts_lifecycle_string_actions(tmp_path: Path) -> None:
+    extra = "lifecycle:\n  on_success: preserve\n  on_failure: delete\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    spec = load_job_spec(config)
+    assert spec.lifecycle.on_success == "preserve"
+    assert spec.lifecycle.on_failure == "delete"
+
+
+@pytest.mark.unit
+def test_load_job_spec_rejects_invalid_lifecycle_action(tmp_path: Path) -> None:
+    extra = "lifecycle:\n  on_success: explode\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    with pytest.raises(ValueError, match="lifecycle.on_success must be one of"):
+        load_job_spec(config)
+
+
+@pytest.mark.unit
+def test_load_job_spec_legacy_stop_bool_shim_maps_to_lifecycle_with_deprecation(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Legacy ``stop: {on_success: true, on_failure: false}`` parses with shim.
+
+    Mapping:
+      - ``on_success: true`` → ``"delete"`` (release disk on success)
+      - ``on_failure: false`` → ``"preserve"`` (legacy "don't stop")
+    A single ``[deprecated]`` WARNING is emitted per parse.
+    """
+    import logging as _logging
+
+    caplog.set_level(_logging.WARNING, logger="runpod_deploy")
+    extra = "stop:\n  on_success: true\n  on_failure: false\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+
+    spec = load_job_spec(config)
+
+    assert spec.lifecycle.on_success == "delete"
+    assert spec.lifecycle.on_failure == "preserve"
+    assert "[deprecated]" in caplog.text and "stop" in caplog.text
+
+
+@pytest.mark.unit
+def test_load_job_spec_rejects_both_lifecycle_and_legacy_stop(tmp_path: Path) -> None:
+    extra = (
+        "lifecycle:\n  on_success: delete\n  on_failure: stop\n"
+        "stop:\n  on_success: true\n  on_failure: true\n"
+    )
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    with pytest.raises(ValueError, match="both 'lifecycle' and legacy 'stop'"):
+        load_job_spec(config)

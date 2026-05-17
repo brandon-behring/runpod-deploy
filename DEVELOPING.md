@@ -133,12 +133,44 @@ When changing a `*Spec` dataclass in `config.py`:
 1. Update the dataclass + `__post_init__` validation.
 2. Update the matching `_parse_*` in `_config_parsers.py` (add to
    `_check_keys` allowed set + extract value).
-3. Update `docs/config-reference.md`.
+3. Update `docs/source/config-reference.md`.
 4. Add a unit test in `tests/test_config.py`.
 5. Add an integration test in `tests/test_orchestrator.py` for the
    use-site behavior (via `--offline-dry-run`).
 6. Add a CHANGELOG entry.
-7. If breaking, bump `SCHEMA_VERSION` + update `MIGRATION.md`.
+7. If breaking, bump `SCHEMA_VERSION` + update
+   `docs/source/migration-v3.md`.
+
+### Lifecycle / cost-affecting changes — doc-code sync is a release blocker
+
+The 2026-05-17 leak (76 stale pods, 3,930 GB, $26/day) was caused by
+`docs/source/lifecycle.md` documenting behavior the code never
+implemented — "Pod is terminated; bills for the runtime so far" was
+false; `runpodctl pod stop` only paused. Doc-code drift on
+cost-affecting paths is a silent operational hazard, not a
+follow-up.
+
+When changing the lifecycle path (`provider.cleanup_pod`, anything
+that calls `runpodctl pod stop` / `pod delete`, the `lifecycle:` YAML
+block, the per-run cleanup WARNING), update **in the same commit**:
+
+1. `docs/source/lifecycle.md` — the three-action table in §7 and
+   the "Cost discipline" §7b.
+2. `docs/source/troubleshooting.md` — the "Cost / cleanup" section
+   entries.
+3. `docs/source/config-reference.md` — the `lifecycle:` block
+   reference.
+4. `CHANGELOG.md` — Added/Changed/Fixed/Deprecated entries with the
+   cost impact spelled out.
+5. The load-bearing regression tests in
+   `tests/test_provider_subprocess.py`
+   (`test_cleanup_pod_delete_calls_runpodctl_pod_delete_and_unlinks_state`,
+   `test_cleanup_pod_stop_logs_actionable_cleanup_command_with_cost_estimate`)
+   — these are designed to fail loudly if cleanup behavior or the
+   operator-facing WARNING regresses.
+
+`make docs` is run in CI as a strict build (`-W --keep-going`);
+broken cross-references will block the merge.
 
 ---
 
