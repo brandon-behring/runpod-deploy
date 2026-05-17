@@ -173,6 +173,127 @@ def test_wait_for_pod_ready_tolerates_non_dict_payload(
     assert pod.host == "1.2.3.4"
 
 
+@pytest.mark.unit
+def test_wait_for_pod_ready_respects_custom_timeout_sec(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """The ``timeout_sec`` kwarg actually drives the deadline math.
+
+    Regression for Issue #88: if the timeout were hard-coded, a
+    `timeout_sec=120` request would still wait the old 240s.
+    """
+    # Time progression: 0 (deadline=120), 60 (still inside), 121 (past).
+    times = iter([0.0, 60.0, 121.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})))
+
+    with pytest.raises(RuntimeError, match="did not become SSH-ready in 120s"):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA RTX A4000", timeout_sec=120)
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_emits_progress_log_after_60s(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    job_ctx: Path,
+) -> None:
+    """Long waits emit a periodic INFO heartbeat so operators see progress.
+
+    Regression for Issue #88's user-experience concern: silent terminal
+    for up to 15 min was the original pain point.
+    """
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="runpod_deploy")
+    # Time progression (one time.time() per iteration after started_at):
+    #   started_at=0; iter1 now=90 (>=60 → emits log); iter2 now=950 (>=900 → breaks).
+    times = iter([0.0, 90.0, 950.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    payload = json.dumps(
+        {
+            "desiredStatus": "RUNNING",
+            "ssh": {"error": "pod not ready", "status": "RUNNING"},
+            "uptimeSeconds": 0,
+        }
+    )
+    fake_subprocess.enqueue(FakeResult(stdout=payload))
+
+    with pytest.raises(RuntimeError):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=900)
+
+    assert "waiting for SSH" in caplog.text
+    assert "T=90" in caplog.text
+    assert "pod-xyz" in caplog.text
+    assert "'pod not ready'" in caplog.text
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_emits_no_progress_log_before_60s(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    job_ctx: Path,
+) -> None:
+    """Fast pulls (<60s) stay silent — no spurious heartbeat."""
+    import logging as _logging
+
+    caplog.set_level(_logging.INFO, logger="runpod_deploy")
+    # T=0 (inside; status still starting), T=999 (deadline expired).
+    times = iter([0.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})))
+
+    with pytest.raises(RuntimeError):
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=120)
+
+    assert "waiting for SSH" not in caplog.text
+
+
+@pytest.mark.unit
+def test_wait_for_pod_ready_error_message_omits_env_block(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """Timeout error keeps only {desiredStatus, ssh, uptimeSeconds}.
+
+    The old full-payload dump leaked SSH pubkeys (in payload['env']) and
+    was unreadable. Regression for the drive-by observability fix.
+    """
+    # started_at=0; iter1 now=10 (reads payload, populates last_payload);
+    # iter2 now=999 (>=120 → breaks; raises with trimmed last_payload).
+    times = iter([0.0, 10.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    payload = json.dumps(
+        {
+            "desiredStatus": "RUNNING",
+            "ssh": {"error": "pod not ready", "status": "RUNNING"},
+            "uptimeSeconds": 0,
+            # The noisy fields that USED to leak:
+            "env": {"PUBLIC_KEY": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5...fakefakefake"},
+            "memoryInGb": 62,
+            "imageName": "runpod/pytorch:huge",
+        }
+    )
+    fake_subprocess.enqueue(FakeResult(stdout=payload))
+
+    with pytest.raises(RuntimeError) as excinfo:
+        _wait_for_pod_ready("pod-xyz", gpu_id="NVIDIA L4", timeout_sec=120)
+
+    msg = str(excinfo.value)
+    # Trimmed message must NOT leak env / SSH pubkeys / image name:
+    assert "PUBLIC_KEY" not in msg
+    assert "ssh-ed25519" not in msg
+    assert "imageName" not in msg
+    # Trimmed message MUST keep the diagnostic fields:
+    assert "desiredStatus" in msg
+    assert "pod not ready" in msg
+    assert "uptimeSeconds" in msg
+
+
 # ---------- provision_pod ----------
 
 

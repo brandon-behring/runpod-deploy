@@ -156,7 +156,13 @@ def _parse_budget(raw: Mapping[str, Any]) -> BudgetSpec:
     _check_keys(
         raw,
         "budget",
-        {"cost_cap_usd", "assumed_hourly_rate_usd", "max_runtime_minutes", "poll_interval_sec"},
+        {
+            "cost_cap_usd",
+            "assumed_hourly_rate_usd",
+            "max_runtime_minutes",
+            "poll_interval_sec",
+            "ssh_ready_timeout_sec",
+        },
     )
     return BudgetSpec(
         cost_cap_usd=_as_float(raw.get("cost_cap_usd", 10.0), "budget.cost_cap_usd"),
@@ -169,6 +175,10 @@ def _parse_budget(raw: Mapping[str, Any]) -> BudgetSpec:
             "budget.max_runtime_minutes",
         ),
         poll_interval_sec=_as_int(raw.get("poll_interval_sec", 60), "budget.poll_interval_sec"),
+        ssh_ready_timeout_sec=_as_int(
+            raw.get("ssh_ready_timeout_sec", 900),
+            "budget.ssh_ready_timeout_sec",
+        ),
     )
 
 

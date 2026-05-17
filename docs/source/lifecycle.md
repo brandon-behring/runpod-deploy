@@ -79,11 +79,19 @@ What runs:
   walking failover events through `on_failover` for telemetry capture.
   Honors `--max-gpu-price <float>` via the GraphQL prices fetched from
   `pricing.fetch_gpu_prices`.
-- `provider.provision_pod(ctx, volume_id, gpu_id, datacenter_id, dry_run)`:
+- `provider.provision_pod(ctx, volume_id, gpu_id, datacenter_id, dry_run, ssh_ready_timeout_sec)`:
   builds the `runpodctl pod create` argv via
   `provider._build_pod_create_argv` (gates `--spot` / `--min-vcpu-count` /
-  `--min-memory-in-gb` via the v0.3.2 feature-detection probe) and
-  shells out. Returns a `PodConnection` with `host`, `port`, `pod_id`.
+  `--min-memory-in-gb` via the v0.3.2 feature-detection probe), shells
+  out, then polls `runpodctl pod get` until the pod publishes a usable
+  `ssh.{ip, port}`. Returns a `PodConnection` with `host`, `port`,
+  `pod_id`. Bounded by `budget.ssh_ready_timeout_sec` (default 900 s;
+  also overridable per-run via `runpod-deploy run --ssh-ready-timeout-sec
+  <N>`). On timeout, the orphaned pod is deleted before re-raising
+  (see [`troubleshooting.md`](troubleshooting.md) for the failure
+  workflow). Waits longer than 60 s emit a periodic INFO heartbeat
+  with `status`, `ssh.error`, and `uptimeSeconds` so operators don't
+  stare at a silent terminal.
 
 The pod's `--name` is set to `ctx.run_id` — which is *rendered*
 (v0.4.0 PR-C), so a YAML with `name: demo-{seed}` produces

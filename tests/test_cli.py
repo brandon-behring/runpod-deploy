@@ -282,3 +282,53 @@ def test_gpu_list_raises_when_datacenter_missing(fake_subprocess: FakeSubprocess
 
     with pytest.raises(RuntimeError, match="datacenter 'EU-RO-1' not found"):
         main(["gpu-list", "--datacenter", "EU-RO-1"])
+
+
+# ---------- --ssh-ready-timeout-sec CLI override (Issue #88) ----------
+
+
+@pytest.mark.unit
+def test_cli_run_propagates_ssh_ready_timeout_sec_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``runpod-deploy run --ssh-ready-timeout-sec 450`` reaches run_job."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    captured: dict[str, Any] = {}
+
+    def fake_run_job(*args: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("runpod_deploy.cli.run_job", fake_run_job)
+
+    rc = main(
+        [
+            "run",
+            "--config",
+            str(config),
+            "--offline-dry-run",
+            "--ssh-ready-timeout-sec",
+            "450",
+        ]
+    )
+
+    assert rc == 0
+    assert captured["ssh_ready_timeout_sec_override"] == 450
+
+
+@pytest.mark.unit
+def test_cli_run_default_ssh_ready_timeout_override_is_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without the flag, the override is None so the spec default applies."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    captured: dict[str, Any] = {}
+
+    def fake_run_job(*args: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("runpod_deploy.cli.run_job", fake_run_job)
+
+    rc = main(["run", "--config", str(config), "--offline-dry-run"])
+
+    assert rc == 0
+    assert captured["ssh_ready_timeout_sec_override"] is None

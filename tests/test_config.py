@@ -427,3 +427,30 @@ def test_load_job_spec_rejects_both_lifecycle_and_legacy_stop(tmp_path: Path) ->
     config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
     with pytest.raises(ValueError, match="both 'lifecycle' and legacy 'stop'"):
         load_job_spec(config)
+
+
+# ---------- budget.ssh_ready_timeout_sec (Issue #88) ----------
+
+
+@pytest.mark.unit
+def test_load_job_spec_default_ssh_ready_timeout_is_900(tmp_path: Path) -> None:
+    """The new default absorbs cold-pull of large pytorch/cudnn images."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    spec = load_job_spec(config)
+    assert spec.budget.ssh_ready_timeout_sec == 900
+
+
+@pytest.mark.unit
+def test_load_job_spec_accepts_ssh_ready_timeout_sec(tmp_path: Path) -> None:
+    extra = "budget:\n  ssh_ready_timeout_sec: 1200\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    spec = load_job_spec(config)
+    assert spec.budget.ssh_ready_timeout_sec == 1200
+
+
+@pytest.mark.unit
+def test_load_job_spec_rejects_zero_ssh_ready_timeout(tmp_path: Path) -> None:
+    extra = "budget:\n  ssh_ready_timeout_sec: 0\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    with pytest.raises(ValueError, match="budget.ssh_ready_timeout_sec must be > 0"):
+        load_job_spec(config)

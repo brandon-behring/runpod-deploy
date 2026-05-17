@@ -6,6 +6,19 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`budget.ssh_ready_timeout_sec`** (default **900 s**) — configurable
+  deadline for SSH info to populate after `runpodctl pod create`. The
+  old hard-coded 240 s was too aggressive for cold-pull of cudnn-devel
+  pytorch images (~6–12 GB) on first-touch GPUs. Resolves #88.
+- **`runpod-deploy run --ssh-ready-timeout-sec <N>`** CLI flag — one-off
+  override of `budget.ssh_ready_timeout_sec` for debugging slow
+  first-pull on a new image/DC without editing YAML. Mirrors the
+  existing override taxonomy (`--gpu-id`, `--datacenter-id`,
+  `--max-gpu-price`).
+- **Periodic INFO progress log** inside `_wait_for_pod_ready` for
+  waits longer than 60 s. Heartbeat every 30 s with status,
+  `ssh.error`, and `uptimeSeconds` — operator gets visible signal
+  mid-wait instead of staring at a silent terminal for up to 15 min.
 - **`lifecycle:` config block** with three-valued actions
   (`preserve | stop | delete`) for `on_success` and `on_failure`. See
   [`lifecycle.md` §7](docs/source/lifecycle.md) and
@@ -36,6 +49,14 @@ This project follows Semantic Versioning.
 
 ### Changed
 
+- **SSH-ready wait deadline** raised from a hard-coded **240 s → 900 s**.
+  The old value timed out on cold-pull of cudnn-devel pytorch images
+  (~6–12 GB) before the SSH proxy could publish a host/port. Now
+  configurable via `budget.ssh_ready_timeout_sec`. (Issue #88.)
+- **SSH-ready timeout error** now shows only
+  `{desiredStatus, ssh, uptimeSeconds}` from the last observed
+  pod-get payload instead of the full dict. The old dump leaked the
+  env block (including SSH pubkeys) and was nearly unreadable.
 - **Schema rename**: `stop:` → `lifecycle:` in YAML configs.
   Dataclass `StopPolicySpec` renamed to `LifecyclePolicySpec`.
   `RunpodJobSpec.stop` is now `RunpodJobSpec.lifecycle`. Field type

@@ -33,6 +33,48 @@ download a newer release.
 
 ---
 
+### `RuntimeError: pod <id> did not become SSH-ready`
+
+**Symptom**: `runpodctl pod create` succeeds, the pod transitions to
+`RUNNING`, but the SSH proxy never publishes a host/port within the
+deadline. The trimmed error message looks like:
+
+```
+RuntimeError: pod abc123 did not become SSH-ready in 900s;
+  last={'desiredStatus': 'RUNNING', 'ssh': {'error': 'pod not ready', 'status': 'RUNNING'},
+        'uptimeSeconds': 0}
+```
+
+**Diagnosis**: image pull/extract on a cold host (no local cache)
+takes longer than `budget.ssh_ready_timeout_sec`. Common with
+cudnn-devel pytorch images (~6–12 GB) in datacenters or on GPU
+classes you don't use often.
+
+If the wait was longer than 60 s, you should also see periodic
+heartbeat INFO logs like
+`[pod] abc123 waiting for SSH; T=120s status='RUNNING' ssh.error='pod not ready' uptimeSeconds=0` —
+that confirms the diagnosis is "still pulling, not stuck".
+
+**Fix (persistent)** — bump the timeout in YAML:
+
+```yaml
+budget:
+  ssh_ready_timeout_sec: 1500   # 25 min; default is 900
+```
+
+**Fix (one-off debugging)** — use the CLI flag without editing YAML:
+
+```bash
+runpod-deploy run --config foo.yaml --ssh-ready-timeout-sec 1500
+```
+
+**Safety**: when the timeout expires, the orchestrator deletes the
+orphaned pod before re-raising (see PR #89 / `cleanup_pod` orphan
+hook). The longer timeout does not leak billing — it just fails the
+run later.
+
+---
+
 ### `no configured GPU is available` post-provision
 
 **Symptom**: the orchestrator emits

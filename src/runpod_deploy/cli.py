@@ -322,6 +322,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         max_gpu_price_usd=args.max_gpu_price,
         cli_variables=cli_variables if cli_variables else None,
         print_run_dir=bool(args.print_run_dir),
+        ssh_ready_timeout_sec_override=args.ssh_ready_timeout_sec,
     )
     return 0
 
@@ -979,6 +980,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "drivers that need a machine-parseable handle to this attempt's "
         "run dir (avoids the 'ls -td' race documented in "
         "docs/recipes/multi-config-sweep.md).",
+    )
+    run_parser.add_argument(
+        "--ssh-ready-timeout-sec",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override budget.ssh_ready_timeout_sec for this run only. "
+        "Useful when debugging slow first-pull of a new image/DC without "
+        "editing YAML. Default is the spec's value (900s if unset).",
     )
 
     cleanup_parser = sub.add_parser(

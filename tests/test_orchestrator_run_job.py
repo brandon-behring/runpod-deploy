@@ -39,6 +39,7 @@ def _write_full_config(
     poll_interval_sec: int = 5,
     on_success: str = "delete",
     on_failure: str = "stop",
+    ssh_ready_timeout_sec: int | None = None,
     artifact_required: bool = True,
     with_env: bool = False,
 ) -> Path:
@@ -59,6 +60,16 @@ def _write_full_config(
         )
     else:
         storage_block = "storage:\n  mode: ephemeral\n  volume_gb: 20\n"
+
+    budget_block = (
+        f"budget:\n"
+        f"  cost_cap_usd: {cost_cap_usd}\n"
+        f"  assumed_hourly_rate_usd: {hourly_rate_usd}\n"
+        f"  max_runtime_minutes: {max_runtime_minutes}\n"
+        f"  poll_interval_sec: {poll_interval_sec}\n"
+    )
+    if ssh_ready_timeout_sec is not None:
+        budget_block += f"  ssh_ready_timeout_sec: {ssh_ready_timeout_sec}\n"
 
     env_block = ""
     if with_env:
@@ -88,12 +99,7 @@ pod:
   datacenters: [US-MD-1]
   gpu_order:
     - NVIDIA A100-SXM4-80GB
-{storage_block}budget:
-  cost_cap_usd: {cost_cap_usd}
-  assumed_hourly_rate_usd: {hourly_rate_usd}
-  max_runtime_minutes: {max_runtime_minutes}
-  poll_interval_sec: {poll_interval_sec}
-run:
+{storage_block}{budget_block}run:
   script_path: /workspace/demo.sh
   log_path: /workspace/demo.log
   success_marker: "[demo] DONE"
@@ -456,3 +462,71 @@ def test_wait_for_sshd_retries_then_raises_runtime_error(
 
     ssh_calls = [c for c in fake_subprocess.calls if c[0] == "ssh"]
     assert len(ssh_calls) == 7
+
+
+# ---------- budget.ssh_ready_timeout_sec plumbing (Issue #88) ----------
+
+
+@pytest.mark.unit
+def test_run_job_passes_default_ssh_ready_timeout_to_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Default spec value (900 s) flows through run_job to provision_pod."""
+    captured: dict[str, Any] = {}
+
+    def fake_provision_pod(*args: Any, **kwargs: Any) -> provider.PodConnection:
+        captured.update(kwargs)
+        return provider.PodConnection(
+            pod_id="<pod-id>", host="203.0.113.10", port=22022, gpu_id=kwargs["gpu_id"]
+        )
+
+    monkeypatch.setattr("runpod_deploy.orchestrator.provision_pod", fake_provision_pod)
+    config = _write_full_config(tmp_path)
+    run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
+
+    assert captured["ssh_ready_timeout_sec"] == 900
+
+
+@pytest.mark.unit
+def test_run_job_passes_spec_ssh_ready_timeout_to_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Explicit YAML value overrides the default."""
+    captured: dict[str, Any] = {}
+
+    def fake_provision_pod(*args: Any, **kwargs: Any) -> provider.PodConnection:
+        captured.update(kwargs)
+        return provider.PodConnection(
+            pod_id="<pod-id>", host="203.0.113.10", port=22022, gpu_id=kwargs["gpu_id"]
+        )
+
+    monkeypatch.setattr("runpod_deploy.orchestrator.provision_pod", fake_provision_pod)
+    config = _write_full_config(tmp_path, ssh_ready_timeout_sec=1200)
+    run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
+
+    assert captured["ssh_ready_timeout_sec"] == 1200
+
+
+@pytest.mark.unit
+def test_run_job_cli_override_wins_over_spec_ssh_ready_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """CLI ``ssh_ready_timeout_sec_override`` beats the spec value."""
+    captured: dict[str, Any] = {}
+
+    def fake_provision_pod(*args: Any, **kwargs: Any) -> provider.PodConnection:
+        captured.update(kwargs)
+        return provider.PodConnection(
+            pod_id="<pod-id>", host="203.0.113.10", port=22022, gpu_id=kwargs["gpu_id"]
+        )
+
+    monkeypatch.setattr("runpod_deploy.orchestrator.provision_pod", fake_provision_pod)
+    config = _write_full_config(tmp_path, ssh_ready_timeout_sec=1200)
+    run_job(
+        load_job_spec(config),
+        config_path=config,
+        offline_dry_run=True,
+        ssh_ready_timeout_sec_override=300,
+    )
+
+    assert captured["ssh_ready_timeout_sec"] == 300

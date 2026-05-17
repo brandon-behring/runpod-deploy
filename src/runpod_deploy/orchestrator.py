@@ -52,6 +52,7 @@ def run_job(
     max_gpu_price_usd: float | None = None,
     cli_variables: Mapping[str, str] | None = None,
     print_run_dir: bool = False,
+    ssh_ready_timeout_sec_override: int | None = None,
 ) -> None:
     """Provision, stage, run, capture telemetry, pull artifacts, and stop one job.
 
@@ -89,12 +90,18 @@ def run_job(
             max_gpu_price_usd=max_gpu_price_usd,
         )
     volume_id = _resolve_volume_id(spec, datacenter_id=datacenter_id, offline=offline_dry_run)
+    ssh_ready_timeout_sec = (
+        ssh_ready_timeout_sec_override
+        if ssh_ready_timeout_sec_override is not None
+        else spec.budget.ssh_ready_timeout_sec
+    )
     pod = provision_pod(
         ctx,
         volume_id=volume_id,
         gpu_id=gpu_id,
         datacenter_id=datacenter_id,
         dry_run=dry_run,
+        ssh_ready_timeout_sec=ssh_ready_timeout_sec,
     )
     runner = RemoteRunner(
         host=pod.host,
