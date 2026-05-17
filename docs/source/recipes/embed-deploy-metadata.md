@@ -5,11 +5,18 @@
 `runpod-deploy capture-env`. This replaces ad-hoc
 `GIT_SHA=$(git rev-parse HEAD)` injection in Makefile targets.
 
-## When you need this
+## Why this is a recipe, not a schema feature
 
 `runpod-deploy run` already embeds `deploy_metadata` in
-`runpod_deploy_pull_manifest.json` for any run it manages. You only
-need this recipe when:
+`runpod_deploy_pull_manifest.json` for any run it manages — that's the
+deployment-primitive part. What's *consumer-domain* is your own
+artifact manifests: which fields you want, what your evaluation
+pipeline writes, how you join the two. `runpod-deploy` exposes the
+capture as a standalone CLI (`capture-env`) so your scripts can pull
+the same metadata into wherever they want it, without baking your
+manifest schema into ours.
+
+Use this recipe when:
 
 - You produce *additional* artifacts that should be pinned to the same
   git SHA / lockfile hash but live in your project's manifest, not
@@ -68,6 +75,30 @@ results_manifest = {
 Each field is `null` (with a WARNING) if the source isn't available
 (no git repo, no `uv.lock` or `requirements.txt`). The command never
 raises.
+
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Capturing git SHA, dirty flag, branch | `runpod-deploy capture-env` (`metadata.capture_local_git`) |
+| Capturing lockfile hash + filename | `runpod-deploy capture-env` (`metadata.capture_payload_lockfile`) |
+| Embedding metadata in the orchestrator-managed pull manifest | `runpod-deploy run` (automatic, no opt-in needed) |
+| Embedding metadata in your own evals/results manifest | Your script (call `capture-env`, parse JSON, merge into your manifest) |
+| Defining what fields your manifest schema requires | Your project |
+
+## Anti-pattern to avoid
+
+**Do not hand-roll `git rev-parse HEAD` injection in Makefiles when
+`capture-env` exists.** The captured fields are a superset of what
+most consumers reach for (SHA + dirty flag + branch + lockfile hash +
+lockfile path), they handle the "no git repo" and "no lockfile" cases
+gracefully, and they emit the same fields that land in
+`runpod_deploy_pull_manifest.json` automatically — so your manifest
+stays consistent with runpod-deploy's.
+
+**Do not pin your evals manifest schema to runpod-deploy's manifest
+schema.** They're different concerns: ours is deploy-state, yours is
+eval-state. Copy the fields you want; don't subclass or re-export.
 
 ## See also
 

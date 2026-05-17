@@ -57,6 +57,18 @@ Each run dir also contains:
 Walk these in your own analysis script when you need to reconstruct
 *why* a run behaved a certain way.
 
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Pulling remote artifacts to the local run dir | `runpod-deploy run` (`artifacts[*]` config + `manifest.write_pull_manifest`) |
+| Capturing `events.jsonl`, `metrics.jsonl`, `nvidia_smi_*.txt`, `pod_describe_*.json` | `runpod-deploy run` (`telemetry` module) |
+| Walking the run-dir directory tree | Your driver (or `runpod_deploy.forensics.walk_run_dirs`) |
+| Parsing `runpod_deploy_pull_manifest.json` | Your driver (or `runpod_deploy.forensics.load_manifest`) |
+| Parsing `events.jsonl` | Your driver (or `runpod_deploy.forensics.load_events`) |
+| Plotting / aggregation / metrics computation | Your post-processing code (consumer-domain) |
+| Joining pulled artifacts with project-wide eval results | Your post-processing code |
+
 ## See also
 
 - [`local-preflight-then-run.md`](local-preflight-then-run.md) —

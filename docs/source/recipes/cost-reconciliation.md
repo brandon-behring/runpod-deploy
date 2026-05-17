@@ -6,19 +6,25 @@
 `budget.assumed_hourly_rate_usd` you set in YAML is realistic, and to
 catch cost drift across runs.
 
-## Why this matters
+## Why this is a recipe, not a schema feature
 
-`budget.cost_cap_usd` × `assumed_hourly_rate_usd` derives the implicit
-runtime ceiling that the orchestrator enforces (see `BudgetSpec.timeout_sec`).
+Cost-reconciliation analysis is *consumer-domain*: which manifests to
+include, how to aggregate, what counts as "drift," and what to do
+about it (bump the assumed rate, split the GPU classes into separate
+configs, escalate to a quota review) all depend on your project's
+budget discipline and tolerance for variance. Those decisions don't
+belong in a deployment-primitives library.
+
+What `runpod-deploy` owns is the *capture* of the cost signal: the v2
+manifest preserves both the assumed rate (implicit in `cost_cap_usd`
+budgeting) and the actual `costPerHr` parsed from `runpodctl pod get`
+(`gpu_price_per_hour_usd` with `gpu_price_source: pod_describe`). The
+reconciliation is yours to drive.
+
 If your assumed rate is much lower than the captured `costPerHr`, jobs
 hit the timeout before reaching their cost cap; if much higher, you're
-over-paying for headroom.
-
-The v2 manifest captures *both* the assumed rate (implicit in
-`cost_cap_usd` budgeting) and the actual `costPerHr` parsed from
-`runpodctl pod get` (`gpu_price_per_hour_usd` with
-`gpu_price_source: pod_describe`). Comparing the two gives you data to
-tune.
+over-paying for headroom. Comparing the two gives you data to tune
+`budget.assumed_hourly_rate_usd` in your YAML configs.
 
 ## One-shot inspection of the latest run
 
@@ -76,6 +82,17 @@ distinguishes:
 When a run shows `failed: true` and `pod_final_state: TERMINATED`,
 RunPod killed the pod mid-run — usually quota or capacity. Re-running
 on a different DC (multi-DC failover) avoids the same outcome next time.
+
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Capturing `costPerHr` from `runpodctl pod get` and persisting it | `runpod-deploy` (`telemetry._extract_price` → manifest `gpu_price_per_hour_usd`) |
+| Capturing wall time and computing `estimated_cost_usd` | `runpod-deploy` (`manifest._estimated_cost_usd`) |
+| Distinguishing `pod_describe` vs `assumed_rate` price sources | `runpod-deploy` (`gpu_price_source` manifest field) |
+| Aggregating across multiple manifests | Your driver (or `runpod_deploy.forensics.walk_run_dirs` + `load_manifest`) |
+| Deciding whether observed drift warrants tuning `assumed_hourly_rate_usd` | Your project's cost discipline |
+| Filing a cost-anomaly issue when drift exceeds your tolerance | Your release process |
 
 ## See also
 
