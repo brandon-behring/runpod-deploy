@@ -205,7 +205,6 @@ def _cmd_gpu_prices(args: argparse.Namespace) -> int:
             prices, gpu_id=gpu_id, cloud_type=args.cloud_type, spot=bool(args.spot)
         )
         rows.append((gpu_id, price))
-    # Sort by price ascending (None last), then gpu_id.
     rows.sort(key=lambda row: (row[1] is None, row[1] or 0.0, row[0]))
     name_width = max((len(name) for name, _ in rows), default=3)
     cloud_label = f"{args.cloud_type.lower()}{'-spot' if args.spot else ''}"
