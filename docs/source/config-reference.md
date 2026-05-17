@@ -87,7 +87,8 @@ lifecycle:                            # optional; defaults shown below
 
 ### `lifecycle:` actions
 
-Each of `on_success` / `on_failure` accepts one of three strings:
+`on_success` accepts one of four strings; `on_failure` accepts the
+first three (`recycle` on the failure path is rejected at validation):
 
 - `delete` — call `runpodctl pod delete`. Tears down both compute
   and volume disk. **Default for `on_success`.** Use this on the
@@ -101,6 +102,15 @@ Each of `on_success` / `on_failure` accepts one of three strings:
 - `preserve` — no-op. Pod keeps running and bills full GPU rate.
   Rare; useful only if you intend to SSH in immediately after the
   job completes.
+- `recycle` — **success-path only.** Same wire call as `stop` (pauses
+  the pod), but the state-file is intentionally preserved so the next
+  `runpod-deploy run` with the same `state_file:` finds the paused
+  pod and resumes it via `runpodctl pod start <id>` instead of
+  provisioning a fresh one. Saves image-pull + cold-boot cost per
+  recurring run. Drift detection (image/GPU/datacenter mismatch)
+  falls through to fresh-create with a WARNING. Bypass for one
+  invocation with `runpod-deploy run --force-fresh`. See
+  [`recipes/recycle-pod-for-fast-iteration.md`](recipes/recycle-pod-for-fast-iteration.md).
 
 The legacy bool form (`stop: {on_success: true, on_failure: true}`)
 is still accepted with a deprecation warning. See

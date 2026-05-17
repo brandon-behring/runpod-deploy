@@ -6,6 +6,36 @@ This project follows Semantic Versioning.
 
 ### Added
 
+- **`lifecycle.on_success: recycle`** — fourth lifecycle action. Pauses
+  the pod at end-of-run AND preserves the state-file. The next
+  `runpod-deploy run` with the same `state_file:` resumes the paused
+  pod (via `runpodctl pod start`) instead of provisioning a fresh one,
+  skipping `runpodctl pod create`, the image pull, and the cold-boot
+  wait. Saves typically 3–5 min per recurring run. Drift detection
+  (image / GPU / datacenter mismatch) falls through to fresh-create
+  with a WARNING. **Success-path only** — `on_failure: recycle` is
+  rejected at validation because failed pods have potentially corrupted
+  state. Resolves #90.
+- **`runpod-deploy run --force-fresh`** CLI flag — skip the recycle
+  resume attempt for one invocation; if a stale paused pod is
+  referenced by the state-file, it is deleted (not resumed). Useful
+  for debugging "did I actually pull the new image?".
+- **`try_resume_pod` function** in `runpod_deploy.provider` — the
+  state-file-pointer-driven resume primitive. Returns `PodConnection`
+  on successful resume, `None` (with a WARNING explaining why) on any
+  fall-through condition.
+- **`pod_resumed: bool`** field in the v2 manifest, plus a
+  `pod_resumed` telemetry event. Distinguishes recycled-warm runs from
+  fresh-cold runs for cost / reproducibility analysis.
+
+### Changed
+
+- **State-file payload extended** from `{pod_id, gpu_id}` to
+  `{pod_id, gpu_id, image, datacenter_id}`. The two new fields are
+  read by `try_resume_pod` to detect spec drift before resuming a
+  paused pod. Older state-files (missing the new fields) are treated
+  as drift → fresh-create.
+
 - **`budget.ssh_ready_timeout_sec`** (default **900 s**) — configurable
   deadline for SSH info to populate after `runpodctl pod create`. The
   old hard-coded 240 s was too aggressive for cold-pull of cudnn-devel

@@ -128,8 +128,14 @@ not pulling bytes.
 
 If image-pull + setup re-execution is still the dominant cost, the
 right next step is to leave a pod *paused* between runs and resume
-it. That feature is on the roadmap as `lifecycle.on_success: recycle`
-— it isn't shipped yet. Open an issue if you'd benefit from it.
+it directly. That's `lifecycle.on_success: recycle` — see
+[`recipes/recycle-pod-for-fast-iteration.md`](recycle-pod-for-fast-iteration.md).
+Recycle reuses ONE pod across runs (saves image-pull + cold-boot);
+network volume here reuses a /workspace ACROSS pods (saves rsync +
+venv state). They're orthogonal and compose: ephemeral storage +
+recycle is the most common combination for "fast iteration on one
+workflow"; network volume + delete is the right combo for "share
+state across parallel sweep workers".
 
 ## What this DOES solve
 

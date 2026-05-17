@@ -323,6 +323,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         cli_variables=cli_variables if cli_variables else None,
         print_run_dir=bool(args.print_run_dir),
         ssh_ready_timeout_sec_override=args.ssh_ready_timeout_sec,
+        force_fresh=bool(args.force_fresh),
     )
     return 0
 
@@ -989,6 +990,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Override budget.ssh_ready_timeout_sec for this run only. "
         "Useful when debugging slow first-pull of a new image/DC without "
         "editing YAML. Default is the spec's value (900s if unset).",
+    )
+    run_parser.add_argument(
+        "--force-fresh",
+        action="store_true",
+        help="Skip the lifecycle.on_success: recycle resume attempt for "
+        "this run only. If a stale paused pod is referenced by the "
+        "state-file, it is deleted (not resumed). Useful for debugging "
+        "'did I actually pull the new image?' without editing YAML.",
     )
 
     cleanup_parser = sub.add_parser(

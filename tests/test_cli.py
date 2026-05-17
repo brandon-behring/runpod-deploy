@@ -332,3 +332,39 @@ def test_cli_run_default_ssh_ready_timeout_override_is_none(
 
     assert rc == 0
     assert captured["ssh_ready_timeout_sec_override"] is None
+
+
+@pytest.mark.unit
+def test_cli_run_propagates_force_fresh(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``runpod-deploy run --force-fresh`` reaches run_job as force_fresh=True."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    captured: dict[str, Any] = {}
+
+    def fake_run_job(*args: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("runpod_deploy.cli.run_job", fake_run_job)
+
+    rc = main(["run", "--config", str(config), "--offline-dry-run", "--force-fresh"])
+
+    assert rc == 0
+    assert captured["force_fresh"] is True
+
+
+@pytest.mark.unit
+def test_cli_run_default_force_fresh_is_false(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Without --force-fresh, force_fresh defaults to False."""
+    config = _write_minimal_config(tmp_path / "job.yaml")
+    captured: dict[str, Any] = {}
+
+    def fake_run_job(*args: Any, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr("runpod_deploy.cli.run_job", fake_run_job)
+
+    rc = main(["run", "--config", str(config), "--offline-dry-run"])
+
+    assert rc == 0
+    assert captured["force_fresh"] is False
