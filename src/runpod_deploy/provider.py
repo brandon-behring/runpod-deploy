@@ -313,8 +313,17 @@ def provision_pod(
     gpu_id: str,
     datacenter_id: str,
     dry_run: bool,
+    ssh_ready_timeout_sec: int = 900,
 ) -> PodConnection:
-    """Provision a pod and return SSH connection details."""
+    """Provision a pod and return SSH connection details.
+
+    ``ssh_ready_timeout_sec`` bounds the wait for the pod's SSH proxy
+    to publish a host/port after ``runpodctl pod create`` succeeds.
+    The default 900 s covers cold-pull of large pytorch/cudnn images
+    on first-touch GPUs. If the deadline expires, the just-created pod
+    is deleted before the ``RuntimeError`` is re-raised so the orphan
+    doesn't bill indefinitely.
+    """
     argv = _build_pod_create_argv(
         ctx, volume_id=volume_id, gpu_id=gpu_id, datacenter_id=datacenter_id
     )
@@ -331,7 +340,7 @@ def provision_pod(
     if not pod_id:
         raise RuntimeError(f"pod create returned no pod id: {payload}")
     try:
-        pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id)
+        pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id, timeout_sec=ssh_ready_timeout_sec)
     except Exception:
         logger.warning(
             f"[lifecycle] pod {pod_id!r} failed to reach SSH-ready; "
@@ -353,11 +362,29 @@ def provision_pod(
     return pod
 
 
-def _wait_for_pod_ready(pod_id: str, *, gpu_id: str) -> PodConnection:
-    """Wait until RunPod reports a pod as running with SSH host/port."""
-    deadline = time.time() + 240
+def _wait_for_pod_ready(pod_id: str, *, gpu_id: str, timeout_sec: int = 900) -> PodConnection:
+    """Wait until RunPod reports a pod as running with SSH host/port.
+
+    Polls ``runpodctl pod get`` every 5 seconds until either the pod
+    publishes a non-empty ``ssh.{ip, port}`` (returns the
+    ``PodConnection``) or ``timeout_sec`` elapses (raises
+    ``RuntimeError``). Emits a periodic INFO progress log every ~30 s
+    after the wait crosses 60 s, so operators staring at a long
+    cold-pull see status mid-wait instead of silent terminal.
+
+    On timeout, the error message includes only ``desiredStatus``,
+    ``ssh``, and ``uptimeSeconds`` from the last observed payload —
+    the full pod-get payload would dump the env block (SSH pubkeys)
+    and is rarely useful for diagnosis.
+    """
+    started_at = time.time()
+    deadline = started_at + timeout_sec
     last_payload: dict[str, object] = {}
-    while time.time() < deadline:
+    next_progress_at = started_at + 60
+    while True:
+        now = time.time()
+        if now >= deadline:
+            break
         payload = run_json(["runpodctl", "pod", "get", pod_id, "-o", "json"])
         if isinstance(payload, dict):
             last_payload = payload
@@ -370,8 +397,17 @@ def _wait_for_pod_ready(pod_id: str, *, gpu_id: str) -> PodConnection:
             if status == "RUNNING" and host and port:
                 logger.info(f"[pod] {pod_id} RUNNING ssh={host}:{port} gpu={gpu_id}")
                 return PodConnection(pod_id=pod_id, host=host, port=port, gpu_id=gpu_id)
+            if now >= next_progress_at:
+                elapsed = now - started_at
+                logger.info(
+                    f"[pod] {pod_id} waiting for SSH; T={elapsed:.0f}s "
+                    f"status={status!r} ssh.error={ssh_info.get('error')!r} "
+                    f"uptimeSeconds={payload.get('uptimeSeconds')!r}"
+                )
+                next_progress_at = now + 30
         time.sleep(5)
-    raise RuntimeError(f"pod {pod_id} did not become SSH-ready; last={last_payload}")
+    trimmed = {k: last_payload.get(k) for k in ("desiredStatus", "ssh", "uptimeSeconds")}
+    raise RuntimeError(f"pod {pod_id} did not become SSH-ready in {timeout_sec}s; last={trimmed}")
 
 
 @dataclass(frozen=True, slots=True)

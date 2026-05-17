@@ -151,6 +151,7 @@ class BudgetSpec:
     assumed_hourly_rate_usd: float = 1.65
     max_runtime_minutes: int | None = None
     poll_interval_sec: int = 60
+    ssh_ready_timeout_sec: int = 900
 
     def __post_init__(self) -> None:
         if self.cost_cap_usd <= 0:
@@ -165,6 +166,10 @@ class BudgetSpec:
             )
         if self.poll_interval_sec <= 0:
             raise ValueError(f"budget.poll_interval_sec must be > 0, got {self.poll_interval_sec}")
+        if self.ssh_ready_timeout_sec <= 0:
+            raise ValueError(
+                f"budget.ssh_ready_timeout_sec must be > 0, got {self.ssh_ready_timeout_sec}"
+            )
 
     @property
     def timeout_sec(self) -> int:

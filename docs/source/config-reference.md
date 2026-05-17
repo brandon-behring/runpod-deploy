@@ -130,6 +130,30 @@ Common optional fields:
 - `stop`
 - `variables`
 
+## `budget:` block — runtime + cost ceilings
+
+```yaml
+budget:
+  cost_cap_usd: 10.0           # default — pod is stopped when projected $/runtime reaches the cap
+  assumed_hourly_rate_usd: 1.65 # default — used in cost projections + budget eta
+  max_runtime_minutes: null     # default — uncapped; derived from cost_cap_usd / hourly_rate
+  poll_interval_sec: 60         # default — cadence for the run-monitor tail loop
+  ssh_ready_timeout_sec: 900    # default — deadline for SSH info to populate post `pod create`
+```
+
+`ssh_ready_timeout_sec` is the wait between `runpodctl pod create`
+returning a pod_id and the pod's SSH proxy publishing a usable
+`{host, port}`. The default 900 s covers cold-pull of large
+pytorch/cudnn-devel images (~6–12 GB) on first-touch GPUs. For
+one-off bumps without editing YAML, use
+`runpod-deploy run --ssh-ready-timeout-sec <N>`. If the wait
+exceeds 60 s, an INFO heartbeat with `status`, `ssh.error`, and
+`uptimeSeconds` is emitted every 30 s. On timeout, the orchestrator
+deletes the orphaned pod before raising (see
+[`lifecycle.md`](lifecycle.md) and
+[`troubleshooting.md`](troubleshooting.md) for the failure
+workflow).
+
 ## Template variables
 
 Every string field in the config can reference template variables via
