@@ -454,3 +454,37 @@ def test_load_job_spec_rejects_zero_ssh_ready_timeout(tmp_path: Path) -> None:
     config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
     with pytest.raises(ValueError, match="budget.ssh_ready_timeout_sec must be > 0"):
         load_job_spec(config)
+
+
+# ---------- lifecycle.on_success: recycle (Issue #90) ----------
+
+
+@pytest.mark.unit
+def test_lifecycle_actions_tuple_includes_recycle() -> None:
+    from runpod_deploy.config import LIFECYCLE_ACTIONS
+
+    assert "recycle" in LIFECYCLE_ACTIONS
+    assert LIFECYCLE_ACTIONS == ("preserve", "stop", "delete", "recycle")
+
+
+@pytest.mark.unit
+def test_load_job_spec_accepts_recycle_on_success(tmp_path: Path) -> None:
+    extra = "lifecycle:\n  on_success: recycle\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    spec = load_job_spec(config)
+    assert spec.lifecycle.on_success == "recycle"
+    assert spec.lifecycle.on_failure == "stop"
+
+
+@pytest.mark.unit
+def test_load_job_spec_rejects_recycle_on_failure(tmp_path: Path) -> None:
+    """Recycle is success-path only — on_failure: recycle is a foot-gun.
+
+    A failed pod has potentially-corrupted state (half-written files,
+    partial setup). Resuming it on the next run would silently inherit
+    the breakage.
+    """
+    extra = "lifecycle:\n  on_failure: recycle\n"
+    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
+    with pytest.raises(ValueError, match="lifecycle.on_failure cannot be 'recycle'"):
+        load_job_spec(config)

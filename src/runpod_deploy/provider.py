@@ -29,6 +29,7 @@ __all__ = [
     "resolve_volume",
     "run_json",
     "select_gpu_across_datacenters",
+    "try_resume_pod",
 ]
 
 logger = logging.getLogger(__name__)
@@ -358,7 +359,17 @@ def provision_pod(
         raise
     state_file = ctx.spec.resolved_state_file
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(json.dumps({"pod_id": pod.pod_id, "gpu_id": gpu_id}, indent=2))
+    state_file.write_text(
+        json.dumps(
+            {
+                "pod_id": pod.pod_id,
+                "gpu_id": gpu_id,
+                "image": ctx.spec.pod.image,
+                "datacenter_id": datacenter_id,
+            },
+            indent=2,
+        )
+    )
     return pod
 
 
@@ -408,6 +419,161 @@ def _wait_for_pod_ready(pod_id: str, *, gpu_id: str, timeout_sec: int = 900) -> 
         time.sleep(5)
     trimmed = {k: last_payload.get(k) for k in ("desiredStatus", "ssh", "uptimeSeconds")}
     raise RuntimeError(f"pod {pod_id} did not become SSH-ready in {timeout_sec}s; last={trimmed}")
+
+
+def try_resume_pod(
+    state_file: Path,
+    *,
+    image: str,
+    gpu_id: str,
+    datacenter_id: str,
+    ssh_ready_timeout_sec: int = 900,
+) -> PodConnection | None:
+    """Attempt to resume a paused pod from a previous ``recycle``-mode run.
+
+    Reads ``state_file`` for a ``{pod_id, gpu_id, image, datacenter_id}``
+    pointer. If the pod still exists in EXITED status AND the recorded
+    ``image`` / ``gpu_id`` / ``datacenter_id`` all match the current
+    spec, calls ``runpodctl pod start <pod_id>`` and returns a
+    :class:`PodConnection` once the SSH proxy publishes a host/port.
+
+    Returns ``None`` (so the caller can fall through to
+    :func:`provision_pod`) in any of these cases:
+
+    * State file missing or unreadable (no previous recycle to resume).
+    * State file lacks required fields (older payload format).
+    * ``runpodctl pod get`` reports the pod doesn't exist or isn't EXITED.
+    * Drift detected (image/GPU/datacenter mismatch). In this case the
+      stale pod is deleted via ``runpodctl pod delete`` before returning,
+      so the next fresh-create doesn't compete with a leftover pod.
+
+    Each fall-through path logs a WARNING explaining why so operators
+    can diagnose "why didn't it resume?" without spelunking through code.
+    """
+    if not state_file.exists():
+        return None
+    try:
+        payload = json.loads(state_file.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(f"[recycle] state file {state_file!s} unreadable ({exc}); fresh-creating")
+        return None
+    if not isinstance(payload, Mapping):
+        logger.warning(
+            f"[recycle] state file {state_file!s} has unexpected shape "
+            f"({type(payload).__name__}); fresh-creating"
+        )
+        return None
+    pod_id = str(payload.get("pod_id") or "")
+    if not pod_id:
+        logger.warning(f"[recycle] state file {state_file!s} has no pod_id; fresh-creating")
+        return None
+    stored_image = payload.get("image")
+    stored_gpu_id = payload.get("gpu_id")
+    stored_datacenter_id = payload.get("datacenter_id")
+    if stored_image is None or stored_gpu_id is None or stored_datacenter_id is None:
+        logger.warning(
+            f"[recycle] state file {state_file!s} lacks image/gpu_id/datacenter_id "
+            f"(pre-recycle format); fresh-creating"
+        )
+        return None
+    argv_get = ["runpodctl", "pod", "get", pod_id, "-o", "json"]
+    log_cmd(logger, "runpodctl", argv_get)
+    get_result = subprocess.run(argv_get, capture_output=True, text=True, check=False)
+    if get_result.returncode != 0:
+        logger.warning(
+            f"[recycle] pod {pod_id!r} not found "
+            f"(runpodctl pod get rc={get_result.returncode}); "
+            f"stale state file; fresh-creating"
+        )
+        return None
+    try:
+        pod_payload = json.loads(get_result.stdout)
+    except json.JSONDecodeError:
+        logger.warning(
+            f"[recycle] runpodctl pod get returned non-JSON for {pod_id!r}; fresh-creating"
+        )
+        return None
+    if not isinstance(pod_payload, Mapping):
+        logger.warning(f"[recycle] pod-get payload for {pod_id!r} is not a dict; fresh-creating")
+        return None
+    desired_status = pod_payload.get("desiredStatus")
+    if desired_status != "EXITED":
+        logger.warning(
+            f"[recycle] pod {pod_id!r} has desiredStatus={desired_status!r}, expected 'EXITED'; "
+            f"fresh-creating (not deleting the pod — operator may be using it)"
+        )
+        return None
+    drift = _detect_recycle_drift(
+        stored_image=str(stored_image),
+        stored_gpu_id=str(stored_gpu_id),
+        stored_datacenter_id=str(stored_datacenter_id),
+        current_image=image,
+        current_gpu_id=gpu_id,
+        current_datacenter_id=datacenter_id,
+    )
+    if drift:
+        logger.warning(
+            f"[recycle] drift detected for pod {pod_id!r}: {drift}; "
+            f"deleting stale pod and fresh-creating"
+        )
+        argv_del = ["runpodctl", "pod", "delete", pod_id]
+        log_cmd(logger, "runpodctl", argv_del)
+        del_result = subprocess.run(argv_del, capture_output=True, text=True, check=False)
+        if del_result.returncode != 0:
+            logger.warning(
+                f"[warn] failed to delete stale pod {pod_id!r}: "
+                f"stdout={del_result.stdout} stderr={del_result.stderr}; "
+                f"release manually with: runpodctl pod delete {pod_id}"
+            )
+        state_file.unlink(missing_ok=True)
+        return None
+    argv_start = ["runpodctl", "pod", "start", pod_id]
+    log_cmd(logger, "runpodctl", argv_start)
+    start_result = subprocess.run(argv_start, capture_output=True, text=True, check=False)
+    if start_result.returncode != 0:
+        logger.warning(
+            f"[recycle] runpodctl pod start failed for {pod_id!r}: "
+            f"stdout={start_result.stdout} stderr={start_result.stderr}; fresh-creating"
+        )
+        return None
+    try:
+        pod = _wait_for_pod_ready(pod_id, gpu_id=gpu_id, timeout_sec=ssh_ready_timeout_sec)
+    except Exception as exc:
+        logger.warning(
+            f"[recycle] pod {pod_id!r} resumed but did not reach SSH-ready ({exc}); "
+            f"deleting and fresh-creating"
+        )
+        argv_del = ["runpodctl", "pod", "delete", pod_id]
+        log_cmd(logger, "runpodctl", argv_del)
+        subprocess.run(argv_del, capture_output=True, text=True, check=False)
+        state_file.unlink(missing_ok=True)
+        return None
+    logger.info(f"[lifecycle] pod {pod_id!r} resumed from recycle pointer at {state_file!s}")
+    return pod
+
+
+def _detect_recycle_drift(
+    *,
+    stored_image: str,
+    stored_gpu_id: str,
+    stored_datacenter_id: str,
+    current_image: str,
+    current_gpu_id: str,
+    current_datacenter_id: str,
+) -> str | None:
+    """Return a human-readable drift summary, or ``None`` if compatible."""
+    diffs: list[str] = []
+    if stored_image != current_image:
+        diffs.append(f"image: stored={stored_image!r} current={current_image!r}")
+    if stored_gpu_id != current_gpu_id:
+        diffs.append(f"gpu_id: stored={stored_gpu_id!r} current={current_gpu_id!r}")
+    if stored_datacenter_id != current_datacenter_id:
+        diffs.append(
+            f"datacenter_id: stored={stored_datacenter_id!r} current={current_datacenter_id!r}"
+        )
+    if not diffs:
+        return None
+    return "; ".join(diffs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,8 +656,26 @@ def cleanup_pod(
         logger.info(f"[lifecycle] pod {pod_id!r} deleted; volume disk released")
         return
 
+    if action == "recycle":
+        argv = ["runpodctl", "pod", "stop", pod_id]
+        log_cmd(logger, "runpodctl", argv)
+        if dry_run or pod_id == "<pod-id>":
+            return
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.warning(
+                f"[warn] failed to recycle pod {pod_id}: "
+                f"stdout={result.stdout} stderr={result.stderr}"
+            )
+            return
+        # State file is intentionally preserved — it's the resume pointer the
+        # next runpod-deploy run reads to find this pod.
+        logger.info(f"[lifecycle] pod {pod_id!r} recycled (paused for reuse on next run)")
+        return
+
     raise ValueError(
-        f"cleanup_pod: unknown action {action!r}; expected 'preserve', 'stop', or 'delete'"
+        f"cleanup_pod: unknown action {action!r}; "
+        f"expected 'preserve', 'stop', 'delete', or 'recycle'"
     )
 
 

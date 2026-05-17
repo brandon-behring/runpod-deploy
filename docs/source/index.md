@@ -34,6 +34,7 @@ recipes/reproducibility
 recipes/forensics-then-cleanup
 recipes/stale-pod-audit
 recipes/payload-reuse-via-network-volume
+recipes/recycle-pod-for-fast-iteration
 ```
 
 ## Examples

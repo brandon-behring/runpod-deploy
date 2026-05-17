@@ -223,7 +223,7 @@ run script started — i.e., not preflight-failure).
 
 After the run completes (or fails), the orchestrator calls
 `cleanup_pod(pod_id, action, dry_run, state_file, volume_in_gb)` with
-one of three actions, controlled by the YAML `lifecycle:` block:
+one of four actions, controlled by the YAML `lifecycle:` block:
 
 ```yaml
 lifecycle:
@@ -233,11 +233,20 @@ lifecycle:
 
 Action semantics:
 
-| action      | runpodctl call         | compute billing | volume disk billing |
-| ----------- | ---------------------- | --------------- | ------------------- |
-| `preserve`  | _(none)_               | continues at GPU rate | continues at volume rate |
-| `stop`      | `pod stop <id>`        | stops           | **continues at ~$0.10/GB·month indefinitely** |
-| `delete`    | `pod delete <id>`      | stops           | stops               |
+| action      | runpodctl call         | compute billing | volume disk billing | state file | next run |
+| ----------- | ---------------------- | --------------- | ------------------- | --- | --- |
+| `preserve`  | _(none)_               | continues at GPU rate | continues at volume rate | preserved | — |
+| `stop`      | `pod stop <id>`        | stops           | **continues at ~$0.10/GB·month indefinitely** | preserved | — |
+| `delete`    | `pod delete <id>`      | stops           | stops               | unlinked | fresh pod |
+| `recycle`   | `pod stop <id>`        | stops           | continues at ~$0.10/GB·month (kept on purpose) | preserved | **resumes paused pod** via `pod start <id>` |
+
+`recycle` is the success-path-only "warm cache" action: the pod is
+paused (same wire call as `stop`) AND the state-file is preserved so
+the next `runpod-deploy run` with the same `state_file:` finds the
+paused pod, validates image/GPU/datacenter compatibility, and calls
+`runpodctl pod start <id>` instead of `pod create`. Saves the
+image-pull + cold-boot cost per recurring run (typically 3–5 min).
+See [`recipes/recycle-pod-for-fast-iteration.md`](recipes/recycle-pod-for-fast-iteration.md).
 
 The defaults `on_success: delete` and `on_failure: stop` encode the
 operational discipline that prevents storage leaks while preserving

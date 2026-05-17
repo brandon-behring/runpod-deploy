@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -530,3 +531,145 @@ def test_run_job_cli_override_wins_over_spec_ssh_ready_timeout(
     )
 
     assert captured["ssh_ready_timeout_sec"] == 300
+
+
+# ---------- lifecycle.on_success: recycle plumbing (Issue #90) ----------
+
+
+@pytest.mark.unit
+def test_run_job_recycle_resumes_when_state_file_points_to_compatible_pod(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """When on_success: recycle and a compatible paused pod exists, resume.
+
+    The orchestrator MUST NOT issue ``runpodctl pod create``; instead it
+    must issue ``runpodctl pod start <id>`` for the pod referenced by
+    the state-file.
+    """
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    # Pre-write a state-file matching the spec defaults from _write_full_config.
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "pod_id": "pod-recycle",
+                "gpu_id": "NVIDIA A100-SXM4-80GB",
+                "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+                "datacenter_id": "US-MD-1",
+            }
+        )
+    )
+    # Predicate-routed responses for try_resume_pod + happy path.
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake_subprocess.when(
+        lambda argv: bool(argv)
+        and argv[:3] == ["runpodctl", "pod", "get"]
+        and "--include-machine" in argv,
+        FakeResult(
+            stdout=json.dumps({"id": "pod-recycle", "costPerHr": 0.35, "desiredStatus": "RUNNING"})
+        ),
+    )
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "stop"],
+        FakeResult(returncode=0),
+    )
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "delete"],
+        FakeResult(returncode=0),
+    )
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="ok\n__RUNPOD_DEPLOY_DONE__\n"))
+    # FIFO order: datacenter list (GPU/DC selection runs first), then
+    # try_resume_pod's pod get (EXITED), pod start, post-start pod get (RUNNING+ssh).
+    # We skip _resolve_volume_id (ephemeral storage) AND skip pod create on the
+    # resume path.
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "US-MD-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "High"}
+                        ],
+                    }
+                ]
+            )
+        ),
+        FakeResult(stdout=json.dumps({"desiredStatus": "EXITED", "ssh": {}})),
+        FakeResult(returncode=0),  # pod start
+        FakeResult(
+            stdout=json.dumps({"desiredStatus": "RUNNING", "ssh": {"ip": "5.6.7.8", "port": 22033}})
+        ),
+    )
+    # Build the config — note: must use the SAME state_file path so the
+    # orchestrator picks up our pre-written pointer.
+    config = _write_full_config(
+        tmp_path,
+        on_success="recycle",
+        storage_mode="ephemeral",  # network_volume would also trigger volume resolution
+    )
+    # Override state_file path in the YAML (since _write_full_config sets its own)
+    config_text = config.read_text()
+    config_text = re.sub(
+        r"state_file: .*",
+        f"state_file: {state_file}",
+        config_text,
+    )
+    config.write_text(config_text)
+    spec = load_job_spec(config)
+
+    run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    argv_strs = [" ".join(c) for c in fake_subprocess.calls]
+    assert not any(
+        "runpodctl pod create" in s for s in argv_strs
+    ), "must NOT pod-create when resuming"
+    assert any("runpodctl pod start pod-recycle" in s for s in argv_strs), "MUST issue pod start"
+
+
+@pytest.mark.unit
+def test_run_job_force_fresh_skips_resume_and_deletes_stale(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """--force-fresh: skip resume even if state-file present; delete stale."""
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    state_file = tmp_path / "state.json"
+    state_file.write_text(
+        json.dumps(
+            {
+                "pod_id": "pod-stale",
+                "gpu_id": "NVIDIA A100-SXM4-80GB",
+                "image": "runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04",
+                "datacenter_id": "US-MD-1",
+            }
+        )
+    )
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="ok\n__RUNPOD_DEPLOY_DONE__\n"))
+    config = _write_full_config(tmp_path, on_success="recycle")
+    config_text = config.read_text()
+    config_text = re.sub(r"state_file: .*", f"state_file: {state_file}", config_text)
+    config.write_text(config_text)
+    spec = load_job_spec(config)
+
+    run_job(spec, config_path=config, dry_run=False, offline_dry_run=False, force_fresh=True)
+
+    argv_strs = [" ".join(c) for c in fake_subprocess.calls]
+    # Stale pod was deleted by _force_fresh_delete_stale:
+    assert any("runpodctl pod delete pod-stale" in s for s in argv_strs)
+    # Fresh pod was created:
+    assert any("runpodctl pod create" in s for s in argv_strs)
+    # No pod start (no resume attempt):
+    start_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "start"]]
+    assert start_calls == []
