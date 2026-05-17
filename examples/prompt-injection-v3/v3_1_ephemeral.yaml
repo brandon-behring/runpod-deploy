@@ -8,7 +8,10 @@ local:
 variables:
   remote_repo: /workspace/prompt-injection-v3
   remote_eval_toolkit: /workspace/eval-toolkit
-  remote_venv: /workspace/.venv-v3
+  # remote_venv on /root (overlay disk), NOT /workspace (FUSE) — avoids MooseFS
+  # F_SETLKW hangs in uv install + HF Trainer atomic save. See docs/source/
+  # troubleshooting.md "uv sync hangs silently" + follow-up sections.
+  remote_venv: /root/.venv-v3
 pod:
   image: runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
   datacenters: [US-MD-1]
@@ -43,11 +46,19 @@ remote_env:
   source_files:
     - /workspace/secrets/env
   exports:
-    HF_HOME: /workspace/hf_cache
+    HF_HOME: /workspace/hf_cache              # FUSE OK — HF caches are read-mostly
     HUGGINGFACE_HUB_CACHE: /workspace/hf_cache
     HF_HUB_DOWNLOAD_TIMEOUT: "120"
-    UV_CACHE_DIR: /workspace/uv_cache
-    UV_PROJECT_ENVIRONMENT: "{remote_venv}"
+    # /workspace is RunPod's distributed FUSE filesystem (mfs#<dc>.runpod.net:9421).
+    # On FUSE, MooseFS F_SETLKW exclusive-lock acquisition stalls in
+    # `request_wait_answer` indefinitely; affects uv git resolution +
+    # uv install-phase atomic writes + HF Trainer atomic checkpoint save.
+    # Pin write-heavy uv dirs to /root (container overlay disk; POSIX locks
+    # work normally there). See docs/source/troubleshooting.md "uv sync hangs
+    # silently" + the two follow-up sections for the three failure modes.
+    UV_CACHE_DIR: /root/uv_cache              # overlay disk; NOT FUSE
+    UV_PROJECT_ENVIRONMENT: "{remote_venv}"   # resolves to /root/.venv-v3 (overlay disk)
+    UV_LINK_MODE: copy                         # defense-in-depth for residual /workspace touchpoints
 setup:
   - command: "test -d /workspace && touch /workspace/.runpod-deploy-write-test && rm /workspace/.runpod-deploy-write-test"
     timeout_sec: 60
@@ -55,7 +66,7 @@ setup:
     timeout_sec: 300
   - command: "curl -LsSf https://astral.sh/uv/install.sh | sh"
     timeout_sec: 300
-  - command: "mkdir -p /workspace/hf_cache /workspace/uv_cache {remote_repo} {remote_eval_toolkit} {remote_repo}/artifacts/data/v3_1 {remote_repo}/artifacts/data/v3_1_views {remote_repo}/artifacts/holdout/v3_1 {remote_repo}/artifacts/report"
+  - command: "mkdir -p /workspace/hf_cache /root/uv_cache {remote_repo} {remote_eval_toolkit} {remote_repo}/artifacts/data/v3_1 {remote_repo}/artifacts/data/v3_1_views {remote_repo}/artifacts/holdout/v3_1 {remote_repo}/artifacts/report"
     timeout_sec: 120
 staging:
   - label: prompt-injection-v3-code
@@ -110,7 +121,7 @@ run:
     export HF_HOME=/workspace/hf_cache
     export HUGGINGFACE_HUB_CACHE=/workspace/hf_cache
     export HF_HUB_DOWNLOAD_TIMEOUT=120
-    export UV_CACHE_DIR=/workspace/uv_cache
+    export UV_CACHE_DIR=/root/uv_cache
     export UV_PROJECT_ENVIRONMENT={remote_venv}
     export PYTHONUNBUFFERED=1
     cd {remote_repo}
