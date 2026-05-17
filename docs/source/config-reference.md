@@ -181,28 +181,43 @@ preflight:
 ### Recommended `remote_env.exports` for uv-driven pods on /workspace
 
 If your `preflight:` or `run.body` runs `uv sync` and your `storage.volume_mount`
-is `/workspace` (RunPod's distributed FUSE filesystem), export `UV_LINK_MODE=copy`.
-uv's default `--link-mode=hardlink` triggers `Stale file handle (os error 116)`
-errors on this FS and hangs silently — see
+is `/workspace` (RunPod's distributed FUSE filesystem), pin uv's write-heavy
+working directories to the pod's overlay disk and export `UV_LINK_MODE=copy`.
+On FUSE, three distinct uv/HF-Trainer code paths can stall on MooseFS
+`F_SETLKW` exclusive-lock acquisition (uv git resolution, uv install-phase
+atomic writes, and HF Trainer atomic checkpoint save) — see
 [troubleshooting.md "uv sync hangs silently"](troubleshooting.md#uv-sync-hangs-silently-with-venv-partially-populated)
-for the failure signature.
++ the two follow-up sections for failure signatures.
 
 ```yaml
 remote_env:
   source_files:
     - /workspace/secrets/env       # if you stage secrets via the secrets: block
   exports:
-    HF_HOME: /workspace/hf_cache
+    HF_HOME: /workspace/hf_cache              # FUSE OK — HF caches are read-mostly
     HUGGINGFACE_HUB_CACHE: /workspace/hf_cache
-    UV_CACHE_DIR: /workspace/uv_cache
-    UV_PROJECT_ENVIRONMENT: /workspace/.venv
-    UV_LINK_MODE: copy               # required on FUSE /workspace; see troubleshooting.md
+    UV_CACHE_DIR: /root/uv_cache              # overlay disk, NOT FUSE — git ops + atomic writes
+    UV_PROJECT_ENVIRONMENT: /root/.venv       # overlay disk, NOT FUSE — install atomic writes
+    UV_LINK_MODE: copy                         # defense-in-depth for residual /workspace touchpoints
 ```
 
-For consumers with large CUDA wheel sets (torch+cu*) where a single download
-stall might still hang the sync, also add `UV_HTTP_TIMEOUT: "120"` (defense
-against Fastly/CDN HTTP stalls) and optionally `UV_CONCURRENT_DOWNLOADS: "4"`
-(caps concurrency; default 50 amplifies head-of-line blocking on stalled sockets).
+`/root` is the container's overlay disk (verify with `df -hT /root` — type
+`overlay`, NOT `fuse`). POSIX locks work normally there. The uv cache and
+venv are ephemeral anyway (re-populated each fire); putting them on `/root`
+sacrifices nothing.
+
+**If your training framework writes checkpoints** (HF Trainer's `save_strategy`,
+PyTorch Lightning's `ModelCheckpoint`, etc.) and the default `output_dir` is
+under `/workspace/`, the atomic-save protocol can stall on the same FUSE bug.
+Pin checkpoint `output_dir` to `/root/checkpoints/` and rsync back to the
+volume as a `run.body` trailer for orchestrator artifact pull. See
+[troubleshooting.md "HF Trainer checkpoint save hangs"](troubleshooting.md#hf-trainer-checkpoint-save-hangs-on-fuse-backed-output_dir).
+
+For genuinely separate network-stall symptoms (single wheel download stuck
+mid-stream rather than a stalled `stat()`/`flock()`), also add
+`UV_HTTP_TIMEOUT: "120"` (defense against Fastly/CDN HTTP stalls) and
+optionally `UV_CONCURRENT_DOWNLOADS: "4"` (caps concurrency; default 50
+amplifies head-of-line blocking on stalled sockets).
 
 ## Pod field: `python_version` (optional, default: unset)
 
