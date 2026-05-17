@@ -44,6 +44,10 @@ domain logic.
 - [`reproducibility.md`](reproducibility.md) — `pod.python_version`
   YAML field + `uv python install/pin` auto-injection to lock the
   CPython interpreter version across sweep runs.
+- [`stock-out-diagnostic.md`](stock-out-diagnostic.md) — pre-launch
+  probe + four-action decision menu (wait / widen / switch / defer)
+  for when the configured `gpu_order` × `datacenters` matrix is empty
+  in your target `cloud_type`.
 - [`forensics-then-cleanup.md`](forensics-then-cleanup.md) —
   workflow for handling a failed run with `lifecycle.on_failure: stop`:
   inspect the pulled manifest, SSH if needed, then release the pod
@@ -82,3 +86,4 @@ workflows pull from 3–4 of these.
 | **Fast-iterate on one workflow (skip cold-start every run)** | [`recycle-pod-for-fast-iteration.md`](recycle-pod-for-fast-iteration.md) + [`payload-reuse-via-network-volume.md`](payload-reuse-via-network-volume.md) |
 | **Stitch deploy provenance into your own evals manifest** | [`embed-deploy-metadata.md`](embed-deploy-metadata.md) + [`local-postprocess-after-run.md`](local-postprocess-after-run.md) |
 | **First-time consumer setup** | [`local-preflight-then-run.md`](local-preflight-then-run.md) + the parent [`quickstart.md`](../quickstart.md) |
+| **Diagnose a stock-out before burning retry budget** | [`stock-out-diagnostic.md`](stock-out-diagnostic.md) + [`multi-config-sweep.md`](multi-config-sweep.md) |
