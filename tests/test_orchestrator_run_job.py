@@ -9,11 +9,24 @@ from typing import Any
 
 import pytest
 
-from runpod_deploy import orchestrator
+from runpod_deploy import orchestrator, provider
 from runpod_deploy.config import load_job_spec
 from runpod_deploy.orchestrator import run_job
 from runpod_deploy.transport import RemoteRunner
 from tests.conftest import FakeResult, FakeSubprocess
+
+
+@pytest.fixture(autouse=True)
+def _stub_supported_flags_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bypass the `runpodctl pod create --help` probe.
+
+    Without this stub, ``provider._supported_pod_create_flags`` shells
+    out once per Python process to detect the locally-installed
+    runpodctl's flag set, consuming an unrelated FakeResult from the
+    FIFO queue and breaking the per-test argv assertions. Mirrors the
+    autouse fixture in tests/test_provider_subprocess.py.
+    """
+    monkeypatch.setattr(provider, "_supported_pod_create_flags", lambda: frozenset())
 
 
 def _write_full_config(
@@ -24,8 +37,8 @@ def _write_full_config(
     hourly_rate_usd: float = 2.0,
     max_runtime_minutes: int = 30,
     poll_interval_sec: int = 5,
-    on_success: bool = True,
-    on_failure: bool = True,
+    on_success: str = "delete",
+    on_failure: str = "stop",
     artifact_required: bool = True,
     with_env: bool = False,
 ) -> Path:
@@ -97,9 +110,9 @@ artifacts:
     local_path: "{pull_dir}"
     required: {str(artifact_required).lower()}
     delete: false
-stop:
-  on_success: {str(on_success).lower()}
-  on_failure: {str(on_failure).lower()}
+lifecycle:
+  on_success: {on_success}
+  on_failure: {on_failure}
 """)
     return config
 
@@ -121,6 +134,10 @@ def _enqueue_runpodctl_happy_path(fake: FakeSubprocess) -> None:
     )
     fake.when(
         lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "stop"],
+        FakeResult(returncode=0),
+    )
+    fake.when(
+        lambda argv: bool(argv) and argv[:3] == ["runpodctl", "pod", "delete"],
         FakeResult(returncode=0),
     )
     # FIFO order matches orchestrator: datacenter list (GPU selection) → network-volume
@@ -188,7 +205,8 @@ def test_run_job_full_happy_path_network_volume(
     assert any("runpodctl pod create" in s for s in argv_strs)
     assert any("runpodctl pod get pod-xyz" in s for s in argv_strs)
     assert any(s.startswith("rsync ") for s in argv_strs)
-    assert any("runpodctl pod stop pod-xyz" in s for s in argv_strs)
+    # Default lifecycle.on_success is "delete" — releases volume disk.
+    assert any("runpodctl pod delete pod-xyz" in s for s in argv_strs)
     assert "__RUNPOD_DEPLOY_DONE__" in caplog.text
     # Pull manifest written under project_root/artifacts/runpod/<ts>/
     manifests = list(tmp_path.rglob("runpod_deploy_pull_manifest.json"))
@@ -251,7 +269,7 @@ def test_run_job_optional_artifact_pull_failure_is_warned(
 
 
 @pytest.mark.unit
-def test_run_job_failure_marker_preserves_pod_when_on_failure_false(
+def test_run_job_failure_marker_preserves_pod_when_on_failure_preserve(
     fake_subprocess: FakeSubprocess,
     fake_popen: Any,
     monkeypatch: pytest.MonkeyPatch,
@@ -263,15 +281,83 @@ def test_run_job_failure_marker_preserves_pod_when_on_failure_false(
     fake_popen(returncode_val=0)
     _enqueue_runpodctl_happy_path(fake_subprocess)
     fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="oops\n__RUNPOD_DEPLOY_FAIL__\n"))
-    config = _write_full_config(tmp_path, on_failure=False)
+    config = _write_full_config(tmp_path, on_failure="preserve")
     spec = load_job_spec(config)
 
     with pytest.raises(RuntimeError, match="failure marker"):
         run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
 
-    assert "[warn] pod preserved" in caplog.text
+    assert "preserved" in caplog.text
     stop_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "stop"]]
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
     assert stop_calls == []
+    assert delete_calls == []
+
+
+@pytest.mark.unit
+def test_run_job_success_deletes_pod_by_default(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Lock the operational fix at the orchestrator level.
+
+    On the happy path, the orchestrator MUST issue
+    ``runpodctl pod delete`` (release volume storage) — and MUST NOT
+    issue ``runpodctl pod stop`` (the legacy behavior that leaked).
+    """
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(
+        _is_monitor_tail, FakeResult(stdout="tail output\n__RUNPOD_DEPLOY_DONE__\n")
+    )
+    config = _write_full_config(tmp_path)  # defaults: on_success=delete
+    spec = load_job_spec(config)
+
+    run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    stop_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "stop"]]
+    assert delete_calls == [["runpodctl", "pod", "delete", "pod-xyz"]]
+    assert stop_calls == []
+
+
+@pytest.mark.unit
+def test_run_job_failure_stops_pod_by_default_with_actionable_warning(
+    fake_subprocess: FakeSubprocess,
+    fake_popen: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Lock the forensics default + the actionable WARNING contract.
+
+    On failure with default ``on_failure=stop``, the orchestrator MUST:
+    1. issue ``runpodctl pod stop`` (preserve for SSH forensics),
+    2. emit a WARNING containing the literal
+       ``runpod-deploy cleanup --state-file`` command and ``ls-stale``
+       so the operator knows how to release the preserved pod.
+    """
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    _freeze_time(monkeypatch)
+    fake_popen(returncode_val=0)
+    _enqueue_runpodctl_happy_path(fake_subprocess)
+    fake_subprocess.when(_is_monitor_tail, FakeResult(stdout="oops\n__RUNPOD_DEPLOY_FAIL__\n"))
+    config = _write_full_config(tmp_path)  # defaults: on_failure=stop
+    spec = load_job_spec(config)
+
+    with pytest.raises(RuntimeError, match="failure marker"):
+        run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    stop_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "stop"]]
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    assert stop_calls == [["runpodctl", "pod", "stop", "pod-xyz"]]
+    assert delete_calls == []
+    # Operator nudge — load-bearing for preventing the 2026-05-17 leak recurrence.
+    assert "runpod-deploy cleanup --state-file" in caplog.text
+    assert "ls-stale" in caplog.text
 
 
 @pytest.mark.unit

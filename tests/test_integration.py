@@ -90,9 +90,9 @@ artifacts:
     remote_path: "/workspace/run-composed-s{seed}.log"
     local_path: "{run_dir}"
     required: false
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(
         load_job_spec(config),
@@ -178,15 +178,16 @@ run:
   body: |
     echo "[minimal] DONE"
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
 
     log = caplog.text
     assert "runpodctl pod create" in log
-    assert "runpodctl pod stop" in log
+    # New default lifecycle.on_success == "delete" — releases volume disk.
+    assert "runpodctl pod delete" in log
     # No setup / staging / preflight / artifact-pull log entries should
     # have raised (each is a no-op on its empty tuple).
 
@@ -296,9 +297,9 @@ telemetry:
   capture_remote_env: true
   capture_local_git: true
   capture_payload_lockfile: true
-stop:
-  on_success: true
-  on_failure: false
+lifecycle:
+  on_success: delete
+  on_failure: preserve
 """)
     run_job(load_job_spec(config), config_path=config, offline_dry_run=True)
 
@@ -307,9 +308,10 @@ stop:
     assert "runpodctl pod create" in log
     assert "rsync-push:source" in log
     assert "uv python install 3.13.5" in log  # python_version is set
-    # stop.on_failure=false → "pod preserved" path NOT exercised on this
-    # success-path test; instead stop.on_success=true triggers stop.
-    assert "runpodctl pod stop" in log
+    # lifecycle.on_failure=preserve → no stop/delete fires on failure;
+    # this is a success-path offline-dry-run, so lifecycle.on_success=delete
+    # triggers and the dry-run logs the would-be `pod delete` argv.
+    assert "runpodctl pod delete" in log
 
 
 # ---- Convergence: same fixture invariants ----
@@ -353,9 +355,9 @@ run:
   success_marker: DONE
   body: echo DONE
 artifacts: []
-stop:
-  on_success: true
-  on_failure: true
+lifecycle:
+  on_success: delete
+  on_failure: stop
 """)
     run_job(
         load_job_spec(config),

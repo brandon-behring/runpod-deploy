@@ -7,15 +7,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, Literal
 
 import yaml
 
 __all__ = [
+    "LIFECYCLE_ACTIONS",
     "ArtifactPullSpec",
     "BudgetSpec",
     "CommandSpec",
     "JobContext",
+    "LifecycleAction",
+    "LifecyclePolicySpec",
     "LocalSpec",
     "PodSpec",
     "RemoteEnvSpec",
@@ -24,11 +27,13 @@ __all__ = [
     "RunpodJobSpec",
     "SecretSpec",
     "SshSpec",
-    "StopPolicySpec",
     "StorageSpec",
     "TelemetrySpec",
     "load_job_spec",
 ]
+
+LifecycleAction = Literal["preserve", "stop", "delete"]
+LIFECYCLE_ACTIONS: Final[tuple[LifecycleAction, ...]] = ("preserve", "stop", "delete")
 
 _OCTAL_MODE_RE = re.compile(r"^0?[0-7]{3}$")
 _PYTHON_VERSION_RE = re.compile(r"^3\.\d+(\.\d+)?$")
@@ -319,11 +324,37 @@ class SecretSpec:
 
 
 @dataclass(frozen=True, slots=True)
-class StopPolicySpec:
-    """Whether to stop the pod after success/failure."""
+class LifecyclePolicySpec:
+    """Pod lifecycle action to take after a run succeeds or fails.
 
-    on_success: bool = True
-    on_failure: bool = True
+    Three actions are possible:
+
+    * ``"preserve"`` — leave the pod alone (compute and disk continue billing).
+    * ``"stop"`` — stop the pod (compute stops; **volume disk continues
+      billing at ~$0.10/GB·month indefinitely** until manually released).
+    * ``"delete"`` — delete the pod (compute stops; volume disk released).
+
+    The default ``on_success="delete"`` releases volume storage on
+    successful runs. ``on_failure="stop"`` preserves a failed pod for
+    SSH post-mortem; once forensics is complete, release with
+    ``runpod-deploy cleanup --state-file <path> --mode delete`` or
+    ``runpod-deploy cleanup --all-stopped``.
+    """
+
+    on_success: LifecycleAction = "delete"
+    on_failure: LifecycleAction = "stop"
+
+    def __post_init__(self) -> None:
+        if self.on_success not in LIFECYCLE_ACTIONS:
+            raise ValueError(
+                f"lifecycle.on_success must be one of {LIFECYCLE_ACTIONS}, "
+                f"got {self.on_success!r}"
+            )
+        if self.on_failure not in LIFECYCLE_ACTIONS:
+            raise ValueError(
+                f"lifecycle.on_failure must be one of {LIFECYCLE_ACTIONS}, "
+                f"got {self.on_failure!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,7 +397,7 @@ class RunpodJobSpec:
     staging: tuple[RsyncPushSpec, ...] = ()
     secrets: tuple[SecretSpec, ...] = ()
     artifacts: tuple[ArtifactPullSpec, ...] = ()
-    stop: StopPolicySpec = field(default_factory=StopPolicySpec)
+    lifecycle: LifecyclePolicySpec = field(default_factory=LifecyclePolicySpec)
     telemetry: TelemetrySpec = field(default_factory=TelemetrySpec)
     variables: dict[str, str] = field(default_factory=dict)
 

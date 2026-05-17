@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -9,10 +10,13 @@ from typing import Any
 
 from runpod_deploy.config import (
     DEFAULT_FAILURE_MARKERS,
+    LIFECYCLE_ACTIONS,
     SCHEMA_VERSION,
     ArtifactPullSpec,
     BudgetSpec,
     CommandSpec,
+    LifecycleAction,
+    LifecyclePolicySpec,
     LocalSpec,
     PodSpec,
     RemoteEnvSpec,
@@ -21,10 +25,11 @@ from runpod_deploy.config import (
     RunSpec,
     SecretSpec,
     SshSpec,
-    StopPolicySpec,
     StorageSpec,
     TelemetrySpec,
 )
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "parse_job_spec",
@@ -57,11 +62,17 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
             "secrets",
             "run",
             "artifacts",
+            "lifecycle",
             "stop",
             "telemetry",
             "variables",
         },
     )
+    if "lifecycle" in raw and "stop" in raw:
+        raise ValueError(
+            "config cannot set both 'lifecycle' and legacy 'stop' blocks; "
+            "remove the deprecated 'stop' block"
+        )
     return RunpodJobSpec(
         schema_version=_as_int(raw.get("schema_version", SCHEMA_VERSION), "schema_version"),
         name=_as_str(raw.get("name"), "name"),
@@ -79,7 +90,7 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
         secrets=_parse_secrets(raw.get("secrets", ())),
         run=_parse_run(_mapping(raw.get("run"), "run")),
         artifacts=_parse_artifacts(raw.get("artifacts", ())),
-        stop=_parse_stop(_mapping(raw.get("stop", {}), "stop")),
+        lifecycle=_parse_lifecycle(raw),
         telemetry=_parse_telemetry(_mapping(raw.get("telemetry", {}), "telemetry")),
         variables=_parse_str_dict(raw.get("variables", {}), "variables"),
     )
@@ -293,12 +304,83 @@ def _parse_artifacts(raw: Any) -> tuple[ArtifactPullSpec, ...]:
     return tuple(out)
 
 
-def _parse_stop(raw: Mapping[str, Any]) -> StopPolicySpec:
-    _check_keys(raw, "stop", {"on_success", "on_failure"})
-    return StopPolicySpec(
-        on_success=_as_bool(raw.get("on_success", True), "stop.on_success"),
-        on_failure=_as_bool(raw.get("on_failure", True), "stop.on_failure"),
-    )
+def _parse_lifecycle(root: Mapping[str, Any]) -> LifecyclePolicySpec:
+    """Parse the lifecycle policy from the root config.
+
+    Accepts the canonical ``lifecycle:`` block or the legacy ``stop:``
+    block (bool-valued). The legacy form is shimmed with a single
+    deprecation warning per parse, mapping:
+
+    * ``stop.on_success: true``  → ``lifecycle.on_success: "delete"``
+    * ``stop.on_success: false`` → ``lifecycle.on_success: "preserve"``
+    * ``stop.on_failure: true``  → ``lifecycle.on_failure: "stop"``
+    * ``stop.on_failure: false`` → ``lifecycle.on_failure: "preserve"``
+
+    Raises:
+        ValueError: if both blocks are present (handled upstream), if a
+            string value is not in :data:`LIFECYCLE_ACTIONS`, or if the
+            value is neither bool nor str.
+    """
+    if "lifecycle" in root:
+        raw = _mapping(root.get("lifecycle", {}), "lifecycle")
+        _check_keys(raw, "lifecycle", {"on_success", "on_failure"})
+        return LifecyclePolicySpec(
+            on_success=_parse_lifecycle_action(
+                raw.get("on_success", "delete"), "lifecycle.on_success"
+            ),
+            on_failure=_parse_lifecycle_action(
+                raw.get("on_failure", "stop"), "lifecycle.on_failure"
+            ),
+        )
+    if "stop" in root:
+        raw = _mapping(root.get("stop", {}), "stop")
+        _check_keys(raw, "stop", {"on_success", "on_failure"})
+        logger.warning(
+            "[deprecated] 'stop' block with bool values is deprecated; "
+            "use 'lifecycle' block with values preserve|stop|delete. "
+            "See docs/source/migration-v3.md."
+        )
+        return LifecyclePolicySpec(
+            on_success=_shim_bool_action(
+                raw.get("on_success", True), "stop.on_success", success=True
+            ),
+            on_failure=_shim_bool_action(
+                raw.get("on_failure", True), "stop.on_failure", success=False
+            ),
+        )
+    return LifecyclePolicySpec()
+
+
+def _parse_lifecycle_action(value: Any, label: str) -> LifecycleAction:
+    """Validate a ``lifecycle.*`` field as one of :data:`LIFECYCLE_ACTIONS`."""
+    if not isinstance(value, str):
+        raise TypeError(
+            f"{label} must be a string in {LIFECYCLE_ACTIONS}, "
+            f"got {type(value).__name__} ({value!r})"
+        )
+    if value not in LIFECYCLE_ACTIONS:
+        raise ValueError(f"{label} must be one of {LIFECYCLE_ACTIONS}, got {value!r}")
+    return value
+
+
+def _shim_bool_action(value: Any, label: str, *, success: bool) -> LifecycleAction:
+    """Map a legacy ``stop.on_{success,failure}`` bool to a :data:`LifecycleAction`.
+
+    ``True`` maps to ``"delete"`` on the success path (release disk on
+    successful runs) and ``"stop"`` on the failure path (preserve for
+    forensics). ``False`` maps to ``"preserve"`` in both cases (no
+    cleanup, matching legacy semantics).
+    """
+    if isinstance(value, str):
+        return _parse_lifecycle_action(value, label)
+    if not isinstance(value, bool):
+        raise TypeError(
+            f"{label} must be a bool (legacy) or a string in {LIFECYCLE_ACTIONS}, "
+            f"got {type(value).__name__} ({value!r})"
+        )
+    if not value:
+        return "preserve"
+    return "delete" if success else "stop"
 
 
 def _parse_telemetry(raw: Mapping[str, Any]) -> TelemetrySpec:

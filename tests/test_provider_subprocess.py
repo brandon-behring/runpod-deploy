@@ -10,10 +10,13 @@ from runpod_deploy import provider
 from runpod_deploy.config import build_job_context, load_job_spec
 from runpod_deploy.provider import (
     PodConnection,
+    StalePod,
     _wait_for_pod_ready,
+    bulk_delete_pods,
+    cleanup_pod,
+    list_stale_pods,
     provision_pod,
     run_json,
-    stop_pod,
 )
 from tests.conftest import FakeResult, FakeSubprocess
 
@@ -207,6 +210,41 @@ def test_provision_pod_raises_when_create_fails(
 
 
 @pytest.mark.unit
+def test_provision_pod_deletes_orphan_when_wait_for_ssh_ready_fails(
+    fake_subprocess: FakeSubprocess, monkeypatch: pytest.MonkeyPatch, job_ctx: Path
+) -> None:
+    """Regression test for the 2026-05-17 Phase 11 smoke discovery.
+
+    When ``runpodctl pod create`` succeeds but ``_wait_for_pod_ready``
+    times out (SSH never comes up), ``provision_pod`` must delete the
+    orphan pod before re-raising. Otherwise the pod is RUNNING and
+    billing at the GPU rate indefinitely, with no caller able to clean
+    up (the orchestrator's ``finally`` never gets a ``pod`` to act on).
+    """
+    # Freeze time so _wait_for_pod_ready exits the loop immediately.
+    times = iter([0.0, 999.0])
+    monkeypatch.setattr("runpod_deploy.provider.time.time", lambda: next(times, 999.0))
+    monkeypatch.setattr("runpod_deploy.provider.time.sleep", lambda _s: None)
+    fake_subprocess.enqueue(
+        FakeResult(stdout='{"id": "pod-orphan"}'),
+        # _wait_for_pod_ready polls pod get; return a non-RUNNING status once,
+        # then the deadline expires.
+        FakeResult(stdout=json.dumps({"desiredStatus": "STARTING"})),
+        # Orphan-cleanup pod delete must be issued and succeed.
+        FakeResult(returncode=0),
+    )
+    ctx = build_job_context(load_job_spec(job_ctx), job_ctx)
+
+    with pytest.raises(RuntimeError, match="did not become SSH-ready"):
+        provision_pod(
+            ctx, volume_id=None, gpu_id="NVIDIA RTX A4000", datacenter_id="EU-RO-1", dry_run=False
+        )
+
+    delete_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "delete"]]
+    assert delete_calls == [["runpodctl", "pod", "delete", "pod-orphan"]]
+
+
+@pytest.mark.unit
 def test_provision_pod_raises_when_no_pod_id_returned(
     fake_subprocess: FakeSubprocess, job_ctx: Path
 ) -> None:
@@ -301,25 +339,95 @@ run:
     ), f"--name must not contain the raw template literal; got {name_value!r}"
 
 
-# ---------- stop_pod ----------
+# ---------- cleanup_pod ----------
 
 
 @pytest.mark.unit
-def test_stop_pod_calls_runpodctl_and_deletes_state_file(
+def test_cleanup_pod_delete_calls_runpodctl_pod_delete_and_unlinks_state(
+    fake_subprocess: FakeSubprocess, tmp_path: Path
+) -> None:
+    """Load-bearing regression test for the 2026-05-17 leak.
+
+    The success path MUST issue `runpodctl pod delete` (not `pod stop`)
+    and remove the state file. Pinning the literal argv prevents a
+    future refactor from silently reverting to the stop-only behavior.
+    """
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="delete", dry_run=False, state_file=state_file)
+
+    assert fake_subprocess.calls == [["runpodctl", "pod", "delete", "pod-xyz"]]
+    assert not state_file.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_pod_stop_calls_runpodctl_pod_stop_and_preserves_state(
     fake_subprocess: FakeSubprocess, tmp_path: Path
 ) -> None:
     state_file = tmp_path / "state.json"
     state_file.write_text("{}")
     fake_subprocess.enqueue(FakeResult(returncode=0))
 
-    stop_pod("pod-xyz", dry_run=False, state_file=state_file)
+    cleanup_pod("pod-xyz", action="stop", dry_run=False, state_file=state_file)
 
     assert fake_subprocess.calls == [["runpodctl", "pod", "stop", "pod-xyz"]]
-    assert not state_file.exists()
+    assert state_file.exists()
 
 
 @pytest.mark.unit
-def test_stop_pod_warns_but_does_not_raise_on_failure(
+def test_cleanup_pod_stop_logs_actionable_cleanup_command_with_cost_estimate(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Load-bearing regression test for the post-forensics cleanup nudge.
+
+    The WARNING emitted after `cleanup_pod(action="stop", ...)` MUST
+    contain:
+    - the literal string ``runpod-deploy cleanup --state-file`` so the
+      operator can copy-paste it,
+    - the literal string ``ls-stale`` so the operator knows about the
+      bulk-audit affordance,
+    - a dollar amount (``$/day``) computed from ``volume_in_gb``.
+
+    Pinning these strings prevents a refactor from silently dropping
+    the operator nudge that prevents the 2026-05-17 leak recurring.
+    """
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    cleanup_pod("pod-xyz", action="stop", dry_run=False, state_file=state_file, volume_in_gb=50)
+
+    assert "runpod-deploy cleanup --state-file" in caplog.text
+    assert "ls-stale" in caplog.text
+    # 50 GB * $0.10/GB-mo / 30 = $0.1666... per day; tolerate float fmt.
+    assert "$0.17/day" in caplog.text or "$0.16/day" in caplog.text
+
+
+@pytest.mark.unit
+def test_cleanup_pod_preserve_is_noop_and_warns(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    state_file = tmp_path / "state.json"
+    state_file.write_text("{}")
+
+    cleanup_pod("pod-xyz", action="preserve", dry_run=False, state_file=state_file)
+
+    assert fake_subprocess.calls == []
+    assert state_file.exists()
+    assert "preserved" in caplog.text
+    assert "runpodctl pod delete pod-xyz" in caplog.text
+
+
+@pytest.mark.unit
+def test_cleanup_pod_delete_warns_but_does_not_raise_on_failure(
     fake_subprocess: FakeSubprocess,
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
@@ -329,20 +437,85 @@ def test_stop_pod_warns_but_does_not_raise_on_failure(
     state_file.write_text("{}")
     fake_subprocess.enqueue(FakeResult(returncode=2, stderr="not found"))
 
-    stop_pod("pod-xyz", dry_run=False, state_file=state_file)
+    cleanup_pod("pod-xyz", action="delete", dry_run=False, state_file=state_file)
 
-    assert "[warn] failed to stop pod pod-xyz" in caplog.text
+    assert "[warn] failed to delete pod pod-xyz" in caplog.text
+    # Failed delete must NOT unlink the state file (pod still exists).
     assert state_file.exists()
 
 
 @pytest.mark.unit
-def test_stop_pod_skips_subprocess_for_sentinel_pod_id(
+def test_cleanup_pod_skips_subprocess_for_sentinel_pod_id(
     fake_subprocess: FakeSubprocess, tmp_path: Path
 ) -> None:
     state_file = tmp_path / "state.json"
     state_file.write_text("{}")
 
-    stop_pod("<pod-id>", dry_run=False, state_file=state_file)
+    cleanup_pod("<pod-id>", action="delete", dry_run=False, state_file=state_file)
 
     assert fake_subprocess.calls == []
     assert state_file.exists()
+
+
+@pytest.mark.unit
+def test_cleanup_pod_rejects_unknown_action() -> None:
+    with pytest.raises(ValueError, match="unknown action"):
+        cleanup_pod("pod-xyz", action="explode", dry_run=False)  # type: ignore[arg-type]
+
+
+# ---------- list_stale_pods / bulk_delete_pods ----------
+
+
+@pytest.mark.unit
+def test_list_stale_pods_parses_runpodctl_json(fake_subprocess: FakeSubprocess) -> None:
+    payload = json.dumps(
+        [
+            {"id": "abc123", "name": "smoke-old", "volumeInGb": 50, "uptimeSeconds": None},
+            {"id": "def456", "name": "bench-old", "volumeInGb": 100, "uptimeSeconds": 3600},
+        ]
+    )
+    fake_subprocess.enqueue(FakeResult(returncode=0, stdout=payload))
+
+    stale = list_stale_pods()
+
+    assert fake_subprocess.calls == [
+        ["runpodctl", "pod", "list", "--status", "EXITED", "-o", "json"]
+    ]
+    assert len(stale) == 2
+    assert stale[0] == StalePod(
+        pod_id="abc123",
+        name="smoke-old",
+        volume_in_gb=50,
+        age_hours=None,
+        estimated_daily_cost_usd=pytest.approx(50 * 0.10 / 30),
+    )
+    assert stale[1].age_hours == pytest.approx(1.0)
+    assert stale[1].estimated_daily_cost_usd == pytest.approx(100 * 0.10 / 30)
+
+
+@pytest.mark.unit
+def test_list_stale_pods_raises_on_non_json_output(fake_subprocess: FakeSubprocess) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=0, stdout="not json at all"))
+
+    with pytest.raises(RuntimeError, match="non-JSON output"):
+        list_stale_pods()
+
+
+@pytest.mark.unit
+def test_bulk_delete_pods_collects_failures_does_not_abort(
+    fake_subprocess: FakeSubprocess,
+) -> None:
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+    fake_subprocess.enqueue(FakeResult(returncode=2, stderr="not found"))
+    fake_subprocess.enqueue(FakeResult(returncode=0))
+
+    results = bulk_delete_pods(["pod-a", "pod-b", "pod-c"], dry_run=False)
+
+    assert [argv[:4] for argv in fake_subprocess.calls] == [
+        ["runpodctl", "pod", "delete", "pod-a"],
+        ["runpodctl", "pod", "delete", "pod-b"],
+        ["runpodctl", "pod", "delete", "pod-c"],
+    ]
+    assert results[0] == ("pod-a", True, "")
+    assert results[1][0] == "pod-b" and results[1][1] is False and "not found" in results[1][2]
+    assert results[2] == ("pod-c", True, "")

@@ -445,6 +445,98 @@ pod_id, GPU, datacenter, wall time, failure flag, estimated cost.
 
 ---
 
+## Cost / cleanup
+
+These are the symptoms of the 2026-05-17 leak — and how to recognize
+recurrences early.
+
+### Stale paused pods are billing indefinitely
+
+**Symptom**: `runpodctl user` shows `currentSpendPerHr > 0` despite
+no apparent activity. `runpodctl pod list` (no `-a`) returns `[]` (no
+RUNNING pods), but `runpodctl pod list -a` shows many EXITED entries.
+
+**Diagnosis**: stopped pods retain their volume disk at **~$0.10/GB·month**
+indefinitely. `runpodctl pod stop` only pauses compute — it does
+*not* release storage. The leak is silent: no GPU bill, just slow
+accumulation on the volume side.
+
+**Fix**:
+
+```bash
+# Audit (read-only): inventory + estimated daily cost
+runpod-deploy ls-stale
+
+# Release every paused pod (irreversible)
+runpod-deploy cleanup --all-stopped --yes
+```
+
+> **Backstory**: On 2026-05-17 this repo's account had 76 EXITED pods
+> totaling 3,930 GB ≈ **$26/day idle burn**. Account balance was 12 h
+> from negative when caught. Read [`lifecycle.md` §7b](lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics)
+> for the post-mortem and the hygiene workflow.
+
+To prevent recurrence: the v0.9 schema defaults to `lifecycle.on_success: delete`,
+so successful runs release disk automatically. Failed runs still
+preserve a paused pod for SSH forensics (`on_failure: stop`); the
+orchestrator emits a multi-line WARNING with the exact release
+command so the operator is never expected to remember the cleanup
+syntax.
+
+---
+
+### My failed run preserved a pod and I want to release it
+
+**Symptom**: After a failed `runpod-deploy run`, you see a WARNING
+like:
+
+```
+[lifecycle] pod 'abc123' stopped for forensics.
+  Volume disk (50 GB) continues billing at ~$0.17/day (~$5.00/mo) until released.
+  When done investigating, release with:
+      runpod-deploy cleanup --state-file ~/.runpod-deploy-current --mode delete
+  Or audit all stale pods:
+      runpod-deploy ls-stale
+```
+
+**Diagnosis**: the run failed and the `on_failure: stop` default
+paused the pod for SSH forensics. You've finished investigating and
+want the volume disk back.
+
+**Fix**: copy the `runpod-deploy cleanup ...` command from the
+WARNING and run it. The default `--mode` is `delete` so the disk is
+released. The state file is unlinked on success.
+
+If you didn't actually need SSH forensics for this workflow, switch
+to `lifecycle: {on_failure: delete}` in the config so failed runs
+release disk automatically (skip the manual cleanup step).
+
+---
+
+### I want to keep payload state between runs (avoid re-uploading)
+
+**Symptom**: every `runpod-deploy run` re-pulls the Docker image
+(~2–5 min), re-runs `setup:` (apt install, uv venv), and re-rsyncs
+the staging payload (1–5 min for typical repos). Across a 100-job
+sweep that's hours of wall time.
+
+**Diagnosis**: with `storage.mode: ephemeral`, the volume is
+destroyed when the pod is destroyed. Every successful run with
+`lifecycle.on_success: delete` (the new default) starts over from a
+fresh image.
+
+**Fix**: switch the workflow to `storage.mode: network_volume` with
+a named, pre-created volume. The volume persists across pods; rsync
+becomes incremental (only changed bytes go over); image layer cache
+and uv venv survive in `/workspace`. See
+[`recipes/payload-reuse-via-network-volume.md`](recipes/payload-reuse-via-network-volume.md)
+for the step-by-step.
+
+Trade-off: a 100 GB network volume costs ~$7/month sitting idle;
+network volumes are pinned to one datacenter.
+
+---
+
 ## Predictions discipline (consumer-side gotcha)
 
 This isn't a runpod-deploy bug — it's a recurring pattern in

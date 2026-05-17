@@ -4,6 +4,94 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+### Added
+
+- **`lifecycle:` config block** with three-valued actions
+  (`preserve | stop | delete`) for `on_success` and `on_failure`. See
+  [`lifecycle.md` §7](docs/source/lifecycle.md) and
+  [`config-reference.md`](docs/source/config-reference.md).
+- **`runpod-deploy ls-stale`** — read-only CLI subcommand listing
+  every EXITED pod on the account with volume size, age, and
+  estimated daily / monthly storage cost. Footer shows account-wide
+  totals. JSON mode (`--json`) for scripting.
+- **`runpod-deploy cleanup --all-stopped [--yes]`** — bulk-release
+  every EXITED pod. Replaces the manual `runpodctl pod list -a | jq
+  -r '.[].id' | xargs runpodctl pod delete` recipe.
+- **`runpod-deploy cleanup --state-file <path> --mode {preserve,stop,delete}`**
+  — per-pod cleanup; supersedes `runpod-deploy stop`.
+- **Per-run cleanup WARNING** on failures with `lifecycle.on_failure: stop`
+  (the default). The WARNING contains the estimated `$/day` storage
+  cost, the literal `runpod-deploy cleanup --state-file …` command,
+  and a pointer to `ls-stale`. Pinned by regression test so future
+  refactors can't drop the operator nudge.
+- **Recipes**:
+  [`forensics-then-cleanup.md`](docs/source/recipes/forensics-then-cleanup.md),
+  [`stale-pod-audit.md`](docs/source/recipes/stale-pod-audit.md),
+  [`payload-reuse-via-network-volume.md`](docs/source/recipes/payload-reuse-via-network-volume.md).
+- **Python API**: `cleanup_pod`, `list_stale_pods`, `bulk_delete_pods`,
+  `StalePod`, `LifecyclePolicySpec`, `LifecycleAction`,
+  `LIFECYCLE_ACTIONS`, `VOLUME_STORAGE_USD_PER_GB_MONTH`,
+  `estimate_volume_storage_cost_usd_per_day` are all exported from
+  `runpod_deploy`.
+
+### Changed
+
+- **Schema rename**: `stop:` → `lifecycle:` in YAML configs.
+  Dataclass `StopPolicySpec` renamed to `LifecyclePolicySpec`.
+  `RunpodJobSpec.stop` is now `RunpodJobSpec.lifecycle`. Field type
+  is `typing.Literal["preserve", "stop", "delete"]` instead of
+  `bool`.
+- **Default `on_success` is now `delete`** (was `true` / "stop" in
+  practice). Successful runs release their volume disk automatically.
+- **Default `on_failure` is now `stop`** (was `true` / "stop" in
+  practice — unchanged semantically, just made explicit). Failed
+  runs preserve the pod paused for SSH forensics; the new WARNING
+  documents how to release it.
+
+### Fixed
+
+- **Orphan-pod leak when SSH-ready wait times out** (discovered during
+  Phase 11 smoke test, 2026-05-17). When `runpodctl pod create`
+  succeeds but `_wait_for_pod_ready` times out (image pull stalls /
+  SSH never comes up), the pod is RUNNING and billing at the GPU rate
+  — but the orchestrator's `finally`-block cleanup never gets a
+  `pod` object to act on, so the pod billed indefinitely until the
+  operator noticed manually. `provision_pod` now wraps
+  `_wait_for_pod_ready` in a try/except and issues `runpodctl pod
+  delete` on failure before re-raising. Regression test:
+  `test_provision_pod_deletes_orphan_when_wait_for_ssh_ready_fails`.
+- **The 2026-05-17 leak.** `provider.stop_pod` (now `cleanup_pod`)
+  used to call `runpodctl pod stop` only, which *pauses* a pod but
+  leaves the volume disk allocated at ~$0.10/GB·month indefinitely.
+  Across this repo's history, 76 stale EXITED pods accumulated
+  3,930 GB of disk = **$1.10/hr (~$26/day, ~$393/month)** of idle
+  storage burn. The new `cleanup_pod` calls `runpodctl pod delete`
+  on the success path, and the failure path emits an actionable
+  WARNING + provides `ls-stale` / `cleanup --all-stopped`
+  affordances so cleanup-after-forensics is always one command.
+- **`docs/source/lifecycle.md` §7** previously claimed pods were
+  "terminated" on stop — false; rewritten with the three-action
+  table and the cost trade-off explicit.
+
+### Deprecated
+
+- **Legacy `stop:` block** in YAML configs. Continues to parse with
+  a single `[deprecated]` WARNING per `load_job_spec` call. Mapping:
+  `on_success: true → "delete"`, `on_success: false → "preserve"`,
+  `on_failure: true → "stop"`, `on_failure: false → "preserve"`.
+  Configs that set both `lifecycle:` and `stop:` are rejected with a
+  clear `ValueError`. Removal target: next minor release.
+- **`runpod-deploy stop`** CLI subcommand. Continues to work as a
+  thin alias to `cleanup --state-file <path> --mode stop` with a
+  deprecation warning. Removal target: next minor release.
+- **`StopPolicySpec`** Python import. Continues to fail loudly (was
+  never aliased) — consumers must update to `LifecyclePolicySpec`.
+
+### Migration
+
+See [`docs/source/migration-v3.md`](docs/source/migration-v3.md) for
+the full mapping table and the "What you need to do" checklist.
+
 ## [0.8.0] - 2026-05-16 — Public docs site at brandon-behring.github.io/runpod-deploy (Sphinx Phase 3 of 3, complete)
 
 ### Added

@@ -25,11 +25,11 @@ from runpod_deploy.config import (
 )
 from runpod_deploy.manifest import ArtifactResult, write_pull_manifest
 from runpod_deploy.provider import (
+    cleanup_pod,
     provision_pod,
     resolve_volume,
     run_json,
     select_gpu_across_datacenters,
-    stop_pod,
 )
 from runpod_deploy.telemetry import TelemetrySession
 from runpod_deploy.transport import RemoteRunner, RsyncTransfer
@@ -146,11 +146,14 @@ def run_job(
         raise
     finally:
         wall_time_sec = time.monotonic() - wall_start
-        should_stop = spec.stop.on_failure if failed else spec.stop.on_success
-        if should_stop:
-            stop_pod(pod.pod_id, dry_run=dry_run, state_file=spec.resolved_state_file)
-        elif not dry_run:
-            logger.warning(f"[warn] pod preserved: {pod.pod_id}")
+        action = spec.lifecycle.on_failure if failed else spec.lifecycle.on_success
+        cleanup_pod(
+            pod.pod_id,
+            action=action,
+            dry_run=dry_run,
+            state_file=spec.resolved_state_file,
+            volume_in_gb=spec.storage.volume_gb,
+        )
         if not dry_run:
             with contextlib.suppress(Exception):
                 write_pull_manifest(
