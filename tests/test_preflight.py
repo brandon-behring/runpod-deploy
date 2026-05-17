@@ -21,6 +21,7 @@ def _write_min_config(
     staging_excludes_extra: tuple[str, ...] = (),
     run_body: str = 'echo "[demo] DONE"',
     setup_commands: tuple[str, ...] = (),
+    remote_env_exports: dict[str, str] | None = None,
 ) -> Path:
     staging_block = ""
     if staging_source is not None:
@@ -41,6 +42,10 @@ staging:
     if setup_commands:
         items = "\n".join(f'  - command: "{c}"' for c in setup_commands)
         setup_block = f"\nsetup:\n{items}\n"
+    env_block = ""
+    if remote_env_exports:
+        exports = "\n".join(f"    {k}: {v}" for k, v in remote_env_exports.items())
+        env_block = f"\nremote_env:\n  exports:\n{exports}\n"
     indented_body = textwrap.indent(run_body, "    ")
     path.write_text(f"""
 schema_version: 2
@@ -61,7 +66,7 @@ run:
   success_marker: "[demo] DONE"
   body: |
 {indented_body}
-{staging_block}{setup_block}""")
+{staging_block}{setup_block}{env_block}""")
     return path
 
 
@@ -564,3 +569,92 @@ def test_path_matches_rsync_exclude_prefix() -> None:
     patterns = ("experiments/refs/",)
     assert preflight._path_matches_rsync_exclude(Path("experiments/refs/x.py"), patterns)
     assert not preflight._path_matches_rsync_exclude(Path("other/experiments/refs/x.py"), patterns)
+
+
+# ---------- FUSE + uv sync + missing UV_LINK_MODE warning (Issue #94) ----------
+
+
+@pytest.mark.unit
+def test_scan_warns_when_uv_sync_on_fuse_without_uv_link_mode(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Default volume_mount=/workspace + setup uv sync + no UV_LINK_MODE → WARN."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="c"\nversion="0.1.0"\ndependencies=[]\n'
+    )
+    ctx = _build_ctx(
+        tmp_path,
+        setup_commands=("uv sync --extra dev",),
+    )
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "FUSE" in messages
+    assert "UV_LINK_MODE=copy" in messages
+    assert "/workspace" in messages
+
+
+@pytest.mark.unit
+def test_scan_quiet_when_uv_link_mode_in_remote_env_exports(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """remote_env.exports.UV_LINK_MODE=copy silences the warning."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="c"\nversion="0.1.0"\ndependencies=[]\n'
+    )
+    ctx = _build_ctx(
+        tmp_path,
+        setup_commands=("uv sync --extra dev",),
+        remote_env_exports={"UV_LINK_MODE": "copy"},
+    )
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "FUSE" not in messages
+
+
+@pytest.mark.unit
+def test_scan_quiet_when_uv_link_mode_inline_in_setup(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Inline `UV_LINK_MODE=copy uv sync` in setup silences the warning."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="c"\nversion="0.1.0"\ndependencies=[]\n'
+    )
+    ctx = _build_ctx(
+        tmp_path,
+        setup_commands=("UV_LINK_MODE=copy uv sync --extra dev",),
+    )
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "FUSE" not in messages
+
+
+@pytest.mark.unit
+def test_scan_quiet_when_no_uv_sync(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """No uv sync anywhere → no FUSE warning (nothing to hang)."""
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname="c"\nversion="0.1.0"\ndependencies=[]\n'
+    )
+    ctx = _build_ctx(tmp_path)  # no setup_commands, default run.body has no uv sync
+    caplog.set_level(logging.WARNING, logger="runpod_deploy.preflight")
+
+    preflight.scan_consumer_pyproject(ctx)
+
+    messages = " ".join(r.message for r in caplog.records)
+    assert "FUSE" not in messages
+
+
+@pytest.mark.unit
+def test_volume_mount_is_fuse_detects_workspace_paths() -> None:
+    assert preflight._volume_mount_is_fuse("/workspace")
+    assert preflight._volume_mount_is_fuse("/workspace/subdir")
+    assert not preflight._volume_mount_is_fuse("/home/user")
+    assert not preflight._volume_mount_is_fuse("/data")

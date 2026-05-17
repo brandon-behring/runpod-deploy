@@ -304,6 +304,60 @@ def scan_consumer_pyproject(ctx: JobContext) -> None:
             "docs/runpod-gotchas.md for the "
             '[tool.uv.sources] torch = { index = "pytorch-cu128" } pattern.'
         )
+    _warn_fuse_uv_link_mode(ctx.spec, installed)
+
+
+def _warn_fuse_uv_link_mode(spec: RunpodJobSpec, installed: _InstallExtraSet) -> None:
+    """Warn when uv sync runs on a FUSE-mounted /workspace without UV_LINK_MODE=copy.
+
+    Detects the conjunction documented by Issue #92 / PR #93:
+    1. ``storage.volume_mount`` is under ``/workspace`` (RunPod's FUSE mount).
+    2. ``setup[*].command`` or ``run.body`` invokes ``uv sync``.
+    3. ``UV_LINK_MODE`` is NOT exported via ``remote_env.exports`` AND not set
+       inline before any ``uv sync`` invocation in the setup/run text.
+
+    Under default uv hardlink mode on FUSE, ``uv sync`` can hang silently
+    partway through wheel extraction. The fix is ``UV_LINK_MODE=copy``;
+    this warning surfaces it before any pod fires. Issue #94.
+    """
+    if not _volume_mount_is_fuse(spec.storage.volume_mount):
+        return
+    if not installed.has_uv_sync:
+        return
+    if _uv_link_mode_set(spec):
+        return
+    logger.warning(
+        f"[scan] uv sync runs on a FUSE-mounted volume_mount={spec.storage.volume_mount!r} "
+        "without UV_LINK_MODE=copy. RunPod's /workspace is a distributed FUSE filesystem; "
+        "uv's default hardlink mode can hang silently partway through wheel install. "
+        "Add `UV_LINK_MODE: copy` to remote_env.exports (or export it inline before "
+        "`uv sync` in setup). See docs/source/troubleshooting.md "
+        '"uv sync hangs silently with .venv partially populated".'
+    )
+
+
+def _volume_mount_is_fuse(volume_mount: str) -> bool:
+    """Whether ``volume_mount`` resolves to RunPod's FUSE-backed /workspace.
+
+    All RunPod-managed network volumes mount under ``/workspace`` (or a
+    subdirectory of it) as a FUSE filesystem. Ephemeral storage uses the
+    same path by convention. Anything outside ``/workspace`` is operator-
+    controlled and we don't make assumptions about it.
+    """
+    return volume_mount == "/workspace" or volume_mount.startswith("/workspace/")
+
+
+_UV_LINK_MODE_INLINE_RE = re.compile(r"(?:^|\s|;|&|&&)UV_LINK_MODE\s*=\s*(?:[\"\']?copy[\"\']?)\b")
+
+
+def _uv_link_mode_set(spec: RunpodJobSpec) -> bool:
+    """Whether UV_LINK_MODE is set (in remote_env.exports OR inline before uv sync)."""
+    if "UV_LINK_MODE" in spec.remote_env.exports:
+        return True
+    for cmd in spec.setup:
+        if _UV_LINK_MODE_INLINE_RE.search(cmd.command):
+            return True
+    return bool(_UV_LINK_MODE_INLINE_RE.search(spec.run.body))
 
 
 def scan_staged_payloads_for_absolute_paths(ctx: JobContext) -> None:

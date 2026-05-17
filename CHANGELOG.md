@@ -6,6 +6,15 @@ This project follows Semantic Versioning.
 
 ### Added
 
+#### Scan-consumer FUSE foot-gun (closes #94)
+
+- **`runpod-deploy validate --scan-consumer` warns about FUSE + uv sync
+  + missing `UV_LINK_MODE`**: detects the conjunction documented in
+  Issue #92 (volume_mount under `/workspace`, uv sync invoked from
+  setup/run.body, no `UV_LINK_MODE=copy` exported). Static catch for
+  the silent-hang foot-gun that PR #93 surfaced as a doc fix. Resolves
+  #94.
+
 #### Pre-flight image-registry check (closes #97)
 
 - **`runpod-deploy validate --check-image-registry`** — HEAD-checks
