@@ -31,6 +31,44 @@ Threadripper / laptop), only invokes `runpod-deploy run` if the audit
 passes, and `runpod-deploy validate --all` does its own pre-flight on
 the YAML before any subprocess fires.
 
+### Prefix Makefile recipes with `uv run` when the dep is a dev-extra
+
+When the consumer's `pyproject.toml` places `runpod-deploy` under
+`[project.optional-dependencies] dev` (the recommended location —
+suggested by `runpod-deploy validate --scan-consumer` to avoid
+polluting production deps with orchestrator tooling), bare
+`runpod-deploy` invocations from a Makefile target break with:
+
+```
+make: runpod-deploy: No such file or directory
+make: *** [Makefile:NN: headline-cloud] Error 127
+```
+
+The fix is one word per recipe — prefix every `runpod-deploy` call
+with `uv run` so make resolves the executable through the project's
+virtualenv:
+
+```makefile
+.PHONY: headline-cloud
+headline-cloud: audit
+	uv run runpod-deploy validate --config configs/runpod/headline.yaml --all
+	uv run runpod-deploy run --config configs/runpod/headline.yaml
+```
+
+This applies to **every** `runpod-deploy` subcommand invoked from
+Makefile (`run`, `validate`, `logs`, `cleanup`, `ls-stale`,
+`gpu-list`, `gpu-prices`, `estimate`, `ls-runs`, `compare-runs`,
+`events`, `events-query`, `capture-env`, `manifest-summary`, etc).
+The `uv run` prefix is harmless when `runpod-deploy` is in
+`[project.dependencies]` (uv finds it the same way), so applying it
+universally is safe.
+
+If your shell PATH already has the venv's `bin/` directory active
+(e.g., `source .venv/bin/activate`), bare `runpod-deploy` works
+interactively but still fails inside `make` because `make` doesn't
+inherit shell activations. Using `uv run` in the Makefile sidesteps
+this.
+
 ## What lives where
 
 | Concern                                                | Owner               |
