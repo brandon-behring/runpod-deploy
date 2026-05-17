@@ -68,7 +68,7 @@ The `stop` subcommand remains as a deprecated alias.
 
 ### Python API changes (breaking for direct importers)
 
-```python
+```python notest
 # Before
 from runpod_deploy import StopPolicySpec
 from runpod_deploy.provider import stop_pod
