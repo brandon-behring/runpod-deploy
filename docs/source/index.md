@@ -31,6 +31,7 @@ recipes/cost-reconciliation
 recipes/predictions-only-eval
 recipes/flash-attention-fallback
 recipes/reproducibility
+recipes/stock-out-diagnostic
 ```
 
 ## Examples
