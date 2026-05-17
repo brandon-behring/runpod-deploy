@@ -48,6 +48,11 @@ remote_env:
     HF_HUB_DOWNLOAD_TIMEOUT: "120"
     UV_CACHE_DIR: /workspace/uv_cache
     UV_PROJECT_ENVIRONMENT: "{remote_venv}"
+    # /workspace is RunPod's distributed FUSE filesystem (mfs#<dc>.runpod.net:9421).
+    # uv default --link-mode=hardlink triggers stale-file-handle (os error 116)
+    # under heavy wheel installs. UV_LINK_MODE=copy is required; see
+    # docs/source/troubleshooting.md "uv sync hangs silently".
+    UV_LINK_MODE: copy
 setup:
   - command: "test -d /workspace && touch /workspace/.runpod-deploy-write-test && rm /workspace/.runpod-deploy-write-test"
     timeout_sec: 60

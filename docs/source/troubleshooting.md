@@ -242,6 +242,42 @@ preflight step exits non-zero. The run aborts before user preflight.
 
 ---
 
+### `uv sync` hangs silently with `.venv` partially populated
+
+**Symptom**: pod-side `uv sync` hangs after starting wheel installation.
+`ps` shows the uv PID alive at 0% CPU; `/workspace/.venv` is frozen at
+a few MB (not growing); `lsof -p <uv_pid>` reveals open file descriptors
+under `/workspace/uv_cache/.tmp*` unpack dirs. No error message; no
+stack trace; preflight times out after the configured `timeout_sec`
+and the orchestrator aborts.
+
+**Diagnosis**: RunPod mounts `/workspace` as a distributed FUSE
+filesystem (confirm with `df -hT /workspace` — returns
+`mfs#<dc>.runpod.net:9421 type fuse`). uv's default
+`--link-mode=hardlink` triggers `Stale file handle (os error 116)`
+errors when installing many wheels onto this FS in tight loops. uv
+either retries silently or stalls on a stat() call. The hang is
+indistinguishable from a slow network read in `ps`/`lsof`.
+
+**Fix**: add `UV_LINK_MODE=copy` to your `remote_env.exports`:
+
+```yaml
+remote_env:
+  exports:
+    UV_LINK_MODE: copy    # avoid stale-file-handle on FUSE-mounted /workspace
+```
+
+uv falls back to full-file copy mode (adds ~10-30s to a typical venv
+populate; eliminates the hardlink hang).
+
+If `UV_LINK_MODE=copy` alone is insufficient (rare; usually a separate
+network-stall issue), also add `UV_HTTP_TIMEOUT=120` (bounds any
+single HTTP read at 120s; eliminates Fastly-CDN stall scenarios) and
+optionally `UV_CONCURRENT_DOWNLOADS=4` (caps concurrent downloads;
+default 50 amplifies head-of-line blocking on stalled sockets).
+
+---
+
 ## Run failures
 
 ### Secrets unavailable on ephemeral pods

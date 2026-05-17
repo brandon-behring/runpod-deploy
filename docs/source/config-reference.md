@@ -178,6 +178,32 @@ preflight:
 
 `with_env: true` prepends `remote_env.source_files` and `remote_env.exports`.
 
+### Recommended `remote_env.exports` for uv-driven pods on /workspace
+
+If your `preflight:` or `run.body` runs `uv sync` and your `storage.volume_mount`
+is `/workspace` (RunPod's distributed FUSE filesystem), export `UV_LINK_MODE=copy`.
+uv's default `--link-mode=hardlink` triggers `Stale file handle (os error 116)`
+errors on this FS and hangs silently — see
+[troubleshooting.md "uv sync hangs silently"](troubleshooting.md#uv-sync-hangs-silently-with-venv-partially-populated)
+for the failure signature.
+
+```yaml
+remote_env:
+  source_files:
+    - /workspace/secrets/env       # if you stage secrets via the secrets: block
+  exports:
+    HF_HOME: /workspace/hf_cache
+    HUGGINGFACE_HUB_CACHE: /workspace/hf_cache
+    UV_CACHE_DIR: /workspace/uv_cache
+    UV_PROJECT_ENVIRONMENT: /workspace/.venv
+    UV_LINK_MODE: copy               # required on FUSE /workspace; see troubleshooting.md
+```
+
+For consumers with large CUDA wheel sets (torch+cu*) where a single download
+stall might still hang the sync, also add `UV_HTTP_TIMEOUT: "120"` (defense
+against Fastly/CDN HTTP stalls) and optionally `UV_CONCURRENT_DOWNLOADS: "4"`
+(caps concurrency; default 50 amplifies head-of-line blocking on stalled sockets).
+
 ## Pod field: `python_version` (optional, default: unset)
 
 ```yaml
