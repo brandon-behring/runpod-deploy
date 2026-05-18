@@ -4,6 +4,80 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-05-18 — Audit follow-through (refactor + tests + docs)
+
+Same-day follow-through on the
+[`code-quality-2026-05-18.md`](docs/audits/code-quality-2026-05-18.md)
+audit. Ships PR-A (refactor), PR-C (tests), PR-B (docs) plus the B1 /
+B2 / D5 / A3 NICE-TO-HAVE resolutions and a coverage gate bump.
+
+### Changed
+
+- **`cli.main()`** is now ~15 lines. Parser construction extracted to
+  `_build_parser()`; handler dict lifted to a module-level
+  `_HANDLERS` constant. New `tests/test_cli_parser.py` pins the
+  subcommand surface against accidental drift. Closes #102.
+- **`provider.cleanup_pod()`** is now ~12 lines. Four per-action
+  helpers (`_cleanup_preserve/stop/delete/recycle`) dispatch via a
+  module-level `_CLEANUP_HANDLERS` dict (same pattern as `cli.py`).
+  Existing `test_provider_subprocess.py` tests cover each branch
+  unmodified. Closes #103.
+- **`PodConnection`, `RemoteRunner`, `select_gpu_across_datacenters`**
+  get a `"""Low-level — see python-api-vs-cli.md."""` docstring tag
+  so the "you probably don't want this" framing is visible at the
+  import site. They remain in `__all__` for additivity. Closes #104
+  (audit B1).
+
+### Added
+
+- **Top-level Python API exports** for `report_gpu_inventory`,
+  `InventoryReport`, `DatacenterInventory` — Python parity for the
+  existing `runpod-deploy gpu-inventory` CLI subcommand. Importable
+  via `from runpod_deploy import report_gpu_inventory, InventoryReport`
+  (audit B2).
+
+### Tests
+
+- **`tests/test_config_spec_validation.py`** — 55 parametrized
+  validation tests across the 11 `*Spec` `__post_init__` raise
+  paths. Closes #108.
+- **`tests/test_orchestrator_run_job.py`** — two new regression
+  tests pin `run_job`'s pre-pod-create failure semantics on
+  stock-out + price-cap scenarios (operational lessons from closed
+  #63 / #66 / #67). Closes #109.
+- **`tests/test_config.py`** — 4 new tests cover
+  `_config_parsers.py` optional-field default branches (audit D5).
+- **`tests/test_integration.py:381`** — `test_integration_module_loads`
+  marked `@pytest.mark.unit`. Closes #107.
+- **Coverage gate** raised from 82% → 84% per CLAUDE.md §13
+  operational addendum (`floor(89.64) − 5`). Total coverage now
+  89.64%.
+
+### Documentation
+
+- **`docs/source/lifecycle.md`** — 4 stale references to removed
+  v0.8.3 syntax (`runpod-deploy stop`, `stop.on_failure`) replaced
+  with the current `runpod-deploy cleanup --state-file ... --mode
+  stop` / `lifecycle.on_failure` forms. Closes #105.
+- **`docs/source/quickstart.md:190`** — same stale-ref fix.
+- **`docs/source/recipes/*.md`** — 6 recipes
+  (`cost-reconciliation`, `forensics-then-cleanup`,
+  `local-postprocess-after-run`, `payload-reuse-via-network-volume`,
+  `recycle-pod-for-fast-iteration`, `stale-pod-audit`) gained the
+  missing "What lives where" tables and/or "Anti-pattern to avoid"
+  sections. All 14 recipes now adhere to the canonical structure
+  per `local-preflight-then-run.md`. Closes #106.
+- **Inline-comment audit (A3)** re-verified on re-review: every
+  surviving comment in `src/` is §12-legitimate (algorithm choices,
+  subtle invariants, bug-workaround citations). No removals.
+- **`docs/audits/code-quality-2026-05-18.md`** §"Open questions" →
+  §"Decisions" with B1 / B2 / D4 resolutions recorded in place.
+
+### Migration
+
+No breaking changes. All commit-by-commit `make ci` green. v0.8.3
+consumers can upgrade to v0.8.4 without touching their YAML.
+
 ## [0.8.3] - 2026-05-18 — Remove deprecated `stop:` block + `runpod-deploy stop` CLI
 
 ### Removed
