@@ -725,21 +725,30 @@ Bundle the SHOULD-FIX items into three small PRs:
 NICE-TO-HAVE items (A3, B2, D4, D5) appear in this audit doc only;
 no separate issues. Fold them into adjacent PRs opportunistically.
 
-## Open questions for the owner
+## Decisions (resolved 2026-05-18)
 
-1. **B1 — `PodConnection` / `RemoteRunner` / `select_gpu_across_datacenters`
-   in `__all__`.** Three options: (a) keep + add docstring tag, (b)
-   demote to module-public, (c) keep + revisit at v1.0. Recommend (a).
-   Decision affects whether the GitHub issue's recommendation is
-   "tag" vs "remove."
+The three open questions raised in the initial audit were resolved
+the same day. Decisions recorded here for the audit trail.
+
+1. **B1 — `PodConnection` / `RemoteRunner` /
+   `select_gpu_across_datacenters` in `__all__`.**
+   **Decision: keep `__all__` membership and add a docstring tag.**
+   Each definition gets a `"""Low-level — see python-api-vs-cli.md."""`
+   line so the "you probably don't want this" framing is visible at the
+   import site. Rationale: most lightweight; preserves additivity for
+   future consumers without breaking even hypothetical existing imports.
+   **Implementation**: PR-A, commit 3 (closes runpod-deploy#104).
 
 2. **B2 — Top-level export of `report_gpu_inventory` /
-   `InventoryReport` / `DatacenterInventory`.** Add to
-   `__init__.py:__all__` for parity with the CLI subcommand, or leave
-   intentional friction at the `runpod_deploy.preflight` module level?
-   Recommend adding (low-cost, additive); but it's a public-API
-   commitment.
+   `InventoryReport` / `DatacenterInventory`.**
+   **Decision: add all three to `__init__.py:__all__`.** The CLI
+   already exposes `runpod-deploy gpu-inventory` as a documented
+   subcommand; the Python API should match for parity. Additive,
+   non-breaking. **Implementation**: PR-A, commit 4 (NICE-TO-HAVE B2
+   folded into PR-A's additive-changes theme).
 
-3. **D4 — Split `test_orchestrator_run_job.py` (919 lines)?** Defer
-   recommended; revisit when the file grows or an obvious topic split
-   appears. Owner may have stronger opinion on test organization.
+3. **D4 — Split `test_orchestrator_run_job.py` (919 lines)?**
+   **Decision: defer.** The file is cohesive (single topic: `run_job`
+   orchestration); splitting would fragment context. Revisit when the
+   file grows or an obvious topic split surfaces naturally.
+   **Implementation**: N/A.
