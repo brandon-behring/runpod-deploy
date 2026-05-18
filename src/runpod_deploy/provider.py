@@ -37,7 +37,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class PodConnection:
-    """SSH-ready RunPod connection details."""
+    """SSH-ready RunPod connection details.
+
+    Low-level — see :doc:`/python-api-vs-cli` for the recommended consumer
+    surface; this type is rarely needed directly.
+    """
 
     pod_id: str
     host: str
@@ -55,6 +59,10 @@ def select_gpu_across_datacenters(
     max_gpu_price_usd: float | None = None,
 ) -> tuple[str, str]:
     """Select first available (gpu_id, datacenter_id) across the failover list.
+
+    Low-level — see :doc:`/python-api-vs-cli` for the recommended consumer
+    surface; this function is rarely needed directly. The CLI exposes the
+    same logic via ``runpod-deploy run`` (which uses this internally).
 
     Iterates ``datacenters`` in order; within each DC iterates ``gpu_order``
     and returns the first GPU with non-empty/non-"out" stock. When a DC
