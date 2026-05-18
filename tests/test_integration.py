@@ -378,6 +378,7 @@ lifecycle:
 # ---- Sanity: integration suite is non-trivial ----
 
 
+@pytest.mark.unit
 def test_integration_module_loads() -> None:
     """Importability check; catches accidental import-time regressions."""
     import tests.test_integration as _

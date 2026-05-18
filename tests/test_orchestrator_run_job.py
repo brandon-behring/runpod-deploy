@@ -385,6 +385,112 @@ def test_run_job_budget_cap_exceeded_raises_before_provisioning(
 
 
 @pytest.mark.unit
+def test_run_job_no_gpu_available_raises_before_pod_create(
+    fake_subprocess: FakeSubprocess,
+    tmp_path: Path,
+) -> None:
+    """Stock-out scenario: configured GPU unavailable in all DCs → RuntimeError.
+
+    Pins the operational lesson from runpod-deploy#63 / #66 / #67: when
+    select_gpu_across_datacenters can't find a match, run_job must raise
+    BEFORE invoking `runpodctl pod create` so the user isn't billed for
+    a pod that can never start.
+    """
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "US-MD-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "out"},
+                        ],
+                    }
+                ]
+            )
+        ),
+    )
+    config = _write_full_config(tmp_path)
+    spec = load_job_spec(config)
+
+    with pytest.raises(RuntimeError, match="no configured GPU available"):
+        run_job(spec, config_path=config, dry_run=False, offline_dry_run=False)
+
+    pod_create_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "create"]]
+    assert (
+        pod_create_calls == []
+    ), f"pod create must not run when GPU resolution fails; got {pod_create_calls}"
+
+
+@pytest.mark.unit
+def test_run_job_max_gpu_price_filters_all_raises_before_pod_create(
+    fake_subprocess: FakeSubprocess,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Price cap scenario: all priced GPUs exceed cap → RuntimeError, no pod create.
+
+    Pins the operational lesson: when --max-gpu-price filters out every
+    candidate GPU, run_job must raise BEFORE invoking pod create.
+    """
+    fake_subprocess.when(
+        lambda argv: bool(argv) and argv[0] == "git",
+        FakeResult(returncode=128, stderr="fatal: not a git repository"),
+    )
+    fake_subprocess.enqueue(
+        FakeResult(
+            stdout=json.dumps(
+                [
+                    {
+                        "id": "US-MD-1",
+                        "gpuAvailability": [
+                            {"gpuId": "NVIDIA A100-SXM4-80GB", "stockStatus": "High"},
+                        ],
+                    }
+                ]
+            )
+        ),
+    )
+
+    def _fake_prices() -> dict[str, Any]:
+        from runpod_deploy.pricing import GpuPrice
+
+        return {
+            "NVIDIA A100-SXM4-80GB": GpuPrice(
+                id="NVIDIA A100-SXM4-80GB",
+                display_name="A100 80GB",
+                secure_price=2.50,
+                community_price=None,
+                secure_spot_price=None,
+                community_spot_price=None,
+                lowest_price=2.50,
+            )
+        }
+
+    monkeypatch.setattr("runpod_deploy.orchestrator.pricing.fetch_gpu_prices", _fake_prices)
+    config = _write_full_config(tmp_path)
+    spec = load_job_spec(config)
+
+    with pytest.raises(RuntimeError, match="no configured GPU available"):
+        run_job(
+            spec,
+            config_path=config,
+            dry_run=False,
+            offline_dry_run=False,
+            max_gpu_price_usd=0.50,  # below the $2.50/hr fake price
+        )
+
+    pod_create_calls = [c for c in fake_subprocess.calls if c[:3] == ["runpodctl", "pod", "create"]]
+    assert (
+        pod_create_calls == []
+    ), f"pod create must not run when price filter excludes all GPUs; got {pod_create_calls}"
+
+
+@pytest.mark.unit
 def test_preflight_failure_skips_artifact_pulls(
     fake_subprocess: FakeSubprocess,
     fake_popen: Any,
