@@ -238,7 +238,7 @@ def _valid_runpod_job_spec_kwargs() -> dict[str, Any]:
             ValueError,
         ),
         (
-            {"variables": {"good": 42}},  # type: ignore[dict-item]
+            {"variables": {"good": 42}},
             "must be str",
             TypeError,
         ),
