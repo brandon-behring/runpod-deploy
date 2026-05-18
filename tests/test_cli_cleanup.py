@@ -14,7 +14,6 @@ which prevents the regression of the 2026-05-17 leak.
 from __future__ import annotations
 
 import json
-import logging
 from pathlib import Path
 
 import pytest
@@ -178,19 +177,16 @@ def test_cli_ls_stale_empty_inventory_prints_friendly_message(
 
 
 @pytest.mark.unit
-def test_cli_stop_alias_logs_deprecation_and_calls_runpodctl_pod_stop(
-    fake_subprocess: FakeSubprocess,
+def test_cli_stop_subcommand_no_longer_registered(
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The legacy `runpod-deploy stop` subcommand still works, with a warning."""
-    caplog.set_level(logging.WARNING, logger="runpod_deploy")
+    """The legacy `runpod-deploy stop` subcommand was removed in v0.8.3.
+
+    argparse rejects it as an unknown subcommand with exit code 2.
+    """
     state_file = _write_state_file(tmp_path)
-    fake_subprocess.enqueue(FakeResult(returncode=0))
-
-    rc = main(["stop", "--state-file", str(state_file)])
-
-    assert rc == 0
-    assert fake_subprocess.calls == [["runpodctl", "pod", "stop", "pod-xyz"]]
-    assert state_file.exists()
-    assert "[deprecated]" in caplog.text and "cleanup" in caplog.text
+    with pytest.raises(SystemExit) as exc_info:
+        main(["stop", "--state-file", str(state_file)])
+    assert exc_info.value.code == 2
+    assert "invalid choice: 'stop'" in capsys.readouterr().err

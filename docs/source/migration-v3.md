@@ -54,9 +54,12 @@ per parse. The shim maps:
 | `stop.on_failure: true`        | `lifecycle.on_failure: stop` |
 | `stop.on_failure: false`       | `lifecycle.on_failure: preserve` |
 
-A config that sets **both** `lifecycle:` and `stop:` is rejected with
-a clear `ValueError`. The bool shim will be removed in a future
-minor release; migrate at your leisure.
+**v0.8.3 removed the bool shim.** A YAML config containing `stop:` now
+raises `ValueError` with a message naming the v0.8.3 removal and
+pointing at this doc. Consumers pinned to v0.8.2 or earlier continue
+to parse the legacy form with a `[deprecated]` WARNING; pinning to
+`runpod-deploy>=0.8.3` requires migrating to the `lifecycle:` block
+first.
 
 ### CLI changes
 

@@ -120,6 +120,6 @@ __all__ = [
     "walk_run_dirs",
 ]
 
-__version__ = "0.8.2"
+__version__ = "0.8.3"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())

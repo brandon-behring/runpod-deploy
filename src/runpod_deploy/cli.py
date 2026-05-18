@@ -899,19 +899,6 @@ def _print_stale_table(stale: Sequence[StalePod]) -> None:
     )
 
 
-def _cmd_stop_deprecated(args: argparse.Namespace) -> int:
-    """Deprecated alias for `cleanup --mode stop`."""
-    logger.warning(
-        "[deprecated] 'runpod-deploy stop' is deprecated; "
-        "use 'runpod-deploy cleanup --state-file <path> --mode stop' instead. "
-        "See docs/source/migration-v3.md."
-    )
-    args.mode = "stop"
-    args.all_stopped = False
-    args.yes = False
-    return _cmd_cleanup(args)
-
-
 def _cmd_logs(args: argparse.Namespace) -> int:
     spec = load_job_spec(args.config)
     state_file = spec.resolved_state_file
@@ -1119,14 +1106,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Emit machine-readable JSON instead of a table.",
     )
 
-    stop_parser = sub.add_parser(
-        "stop",
-        parents=[verbosity],
-        help="DEPRECATED: use `cleanup --state-file ... --mode stop` instead.",
-    )
-    stop_parser.add_argument("--state-file", type=Path, required=True)
-    stop_parser.add_argument("--dry-run", action="store_true")
-
     logs_parser = sub.add_parser(
         "logs", parents=[verbosity], help="Live-tail the current pod's run log."
     )
@@ -1329,7 +1308,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "run": _cmd_run,
         "cleanup": _cmd_cleanup,
         "ls-stale": _cmd_ls_stale,
-        "stop": _cmd_stop_deprecated,
         "logs": _cmd_logs,
         "gpu-list": _cmd_gpu_list,
         "gpu-inventory": _cmd_gpu_inventory,

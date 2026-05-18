@@ -394,38 +394,15 @@ def test_load_job_spec_rejects_invalid_lifecycle_action(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_load_job_spec_legacy_stop_bool_shim_maps_to_lifecycle_with_deprecation(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Legacy ``stop: {on_success: true, on_failure: false}`` parses with shim.
+def test_load_job_spec_legacy_stop_block_now_raises(tmp_path: Path) -> None:
+    """The legacy ``stop:`` block was removed in v0.8.3.
 
-    Mapping:
-      - ``on_success: true`` → ``"delete"`` (release disk on success)
-      - ``on_failure: false`` → ``"preserve"`` (legacy "don't stop")
-    A single ``[deprecated]`` WARNING is emitted per parse.
+    The error message names the v0.8.3 removal and points to the migration
+    doc so consumers pinned to <=v0.8.2 can find their migration path.
     """
-    import logging as _logging
-
-    caplog.set_level(_logging.WARNING, logger="runpod_deploy")
-    extra = "stop:\n  on_success: true\n  on_failure: false\n"
+    extra = "stop:\n  on_success: true\n  on_failure: true\n"
     config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
-
-    spec = load_job_spec(config)
-
-    assert spec.lifecycle.on_success == "delete"
-    assert spec.lifecycle.on_failure == "preserve"
-    assert "[deprecated]" in caplog.text and "stop" in caplog.text
-
-
-@pytest.mark.unit
-def test_load_job_spec_rejects_both_lifecycle_and_legacy_stop(tmp_path: Path) -> None:
-    extra = (
-        "lifecycle:\n  on_success: delete\n  on_failure: stop\n"
-        "stop:\n  on_success: true\n  on_failure: true\n"
-    )
-    config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
-    with pytest.raises(ValueError, match="both 'lifecycle' and legacy 'stop'"):
+    with pytest.raises(ValueError, match="legacy 'stop' block was removed in v0.8.3"):
         load_job_spec(config)
 
 

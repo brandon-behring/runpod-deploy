@@ -42,6 +42,11 @@ _TEMPLATE_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
     """Parse a validated YAML mapping into a RunpodJobSpec."""
+    if "stop" in raw:
+        raise ValueError(
+            "the legacy 'stop' block was removed in v0.8.3; use the 'lifecycle' "
+            "block with values preserve|stop|delete. See docs/source/migration-v3.md."
+        )
     _check_keys(
         raw,
         "root",
@@ -63,16 +68,10 @@ def parse_job_spec(raw: Mapping[str, Any]) -> RunpodJobSpec:
             "run",
             "artifacts",
             "lifecycle",
-            "stop",
             "telemetry",
             "variables",
         },
     )
-    if "lifecycle" in raw and "stop" in raw:
-        raise ValueError(
-            "config cannot set both 'lifecycle' and legacy 'stop' blocks; "
-            "remove the deprecated 'stop' block"
-        )
     return RunpodJobSpec(
         schema_version=_as_int(raw.get("schema_version", SCHEMA_VERSION), "schema_version"),
         name=_as_str(raw.get("name"), "name"),
@@ -317,19 +316,8 @@ def _parse_artifacts(raw: Any) -> tuple[ArtifactPullSpec, ...]:
 def _parse_lifecycle(root: Mapping[str, Any]) -> LifecyclePolicySpec:
     """Parse the lifecycle policy from the root config.
 
-    Accepts the canonical ``lifecycle:`` block or the legacy ``stop:``
-    block (bool-valued). The legacy form is shimmed with a single
-    deprecation warning per parse, mapping:
-
-    * ``stop.on_success: true``  → ``lifecycle.on_success: "delete"``
-    * ``stop.on_success: false`` → ``lifecycle.on_success: "preserve"``
-    * ``stop.on_failure: true``  → ``lifecycle.on_failure: "stop"``
-    * ``stop.on_failure: false`` → ``lifecycle.on_failure: "preserve"``
-
     Raises:
-        ValueError: if both blocks are present (handled upstream), if a
-            string value is not in :data:`LIFECYCLE_ACTIONS`, or if the
-            value is neither bool nor str.
+        ValueError: if a value is not in :data:`LIFECYCLE_ACTIONS`.
     """
     if "lifecycle" in root:
         raw = _mapping(root.get("lifecycle", {}), "lifecycle")
@@ -340,22 +328,6 @@ def _parse_lifecycle(root: Mapping[str, Any]) -> LifecyclePolicySpec:
             ),
             on_failure=_parse_lifecycle_action(
                 raw.get("on_failure", "stop"), "lifecycle.on_failure"
-            ),
-        )
-    if "stop" in root:
-        raw = _mapping(root.get("stop", {}), "stop")
-        _check_keys(raw, "stop", {"on_success", "on_failure"})
-        logger.warning(
-            "[deprecated] 'stop' block with bool values is deprecated; "
-            "use 'lifecycle' block with values preserve|stop|delete. "
-            "See docs/source/migration-v3.md."
-        )
-        return LifecyclePolicySpec(
-            on_success=_shim_bool_action(
-                raw.get("on_success", True), "stop.on_success", success=True
-            ),
-            on_failure=_shim_bool_action(
-                raw.get("on_failure", True), "stop.on_failure", success=False
             ),
         )
     return LifecyclePolicySpec()
@@ -371,26 +343,6 @@ def _parse_lifecycle_action(value: Any, label: str) -> LifecycleAction:
     if value not in LIFECYCLE_ACTIONS:
         raise ValueError(f"{label} must be one of {LIFECYCLE_ACTIONS}, got {value!r}")
     return value
-
-
-def _shim_bool_action(value: Any, label: str, *, success: bool) -> LifecycleAction:
-    """Map a legacy ``stop.on_{success,failure}`` bool to a :data:`LifecycleAction`.
-
-    ``True`` maps to ``"delete"`` on the success path (release disk on
-    successful runs) and ``"stop"`` on the failure path (preserve for
-    forensics). ``False`` maps to ``"preserve"`` in both cases (no
-    cleanup, matching legacy semantics).
-    """
-    if isinstance(value, str):
-        return _parse_lifecycle_action(value, label)
-    if not isinstance(value, bool):
-        raise TypeError(
-            f"{label} must be a bool (legacy) or a string in {LIFECYCLE_ACTIONS}, "
-            f"got {type(value).__name__} ({value!r})"
-        )
-    if not value:
-        return "preserve"
-    return "delete" if success else "stop"
 
 
 def _parse_telemetry(raw: Mapping[str, Any]) -> TelemetrySpec:

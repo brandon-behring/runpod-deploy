@@ -4,6 +4,29 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-05-18 — Remove deprecated `stop:` block + `runpod-deploy stop` CLI
+
+### Removed
+
+- **Legacy `stop:` YAML block.** The bool-valued `stop: {on_success, on_failure}`
+  shim — deprecated with a WARNING in v0.8.2 — no longer parses. A YAML
+  config containing `stop:` now raises `ValueError` with a diagnostic
+  message that names the v0.8.3 removal and points at
+  [`docs/source/migration-v3.md`](docs/source/migration-v3.md). Migration:
+  replace with `lifecycle: {on_success: delete, on_failure: stop}` (or the
+  per-consumer values from the v0.8.2 migration table).
+- **`runpod-deploy stop` CLI subcommand.** Removed; argparse now rejects
+  `stop` as an unknown subcommand. Use
+  `runpod-deploy cleanup --state-file <path> --mode stop` instead.
+- **`_shim_bool_action()` parser helper** in `_config_parsers.py` (no
+  public re-export; internal cleanup).
+
+### Migration
+
+Same mapping table as v0.8.2's deprecation entry — consumers pinned to
+v0.8.2 or earlier are unaffected until they upgrade. See
+[`docs/source/migration-v3.md`](docs/source/migration-v3.md).
+
 ## [0.8.2] - 2026-05-18 — Lifecycle redesign + preflight image/FUSE checks
 
 ### Added
