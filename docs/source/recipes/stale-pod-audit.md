@@ -124,6 +124,31 @@ All three cases share the same cost characteristic: volume disk is
 billing until you call `runpodctl pod delete`. The audit treats them
 uniformly because the cost concern is uniform.
 
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Listing EXITED pods + per-pod daily storage cost | `runpod-deploy ls-stale` (read-only; idempotent) |
+| Emitting machine-readable JSON for scripting | `runpod-deploy ls-stale --json` |
+| Releasing N stale pods in one bulk call | `runpod-deploy cleanup --all-stopped [--yes]` |
+| Scheduling the audit | Your cron / GH Action / Slack ping (consumer-side) |
+| Deciding the staleness threshold (release if `age_hours > N`) | You (project-specific; see Option 4) |
+| Alerting on the inventory (Slack / email / PagerDuty) | Your alerting glue (consumer-side) |
+
+## Anti-pattern to avoid
+
+Don't auto-release pods inside `runpod-deploy run` based on age — the
+operator should always be the one deciding whether a stale pod is
+forgotten waste vs forensic state mid-investigation. The CLI gives
+you `ls-stale` (visibility) + `cleanup --all-stopped` (action) as
+separate primitives precisely so that automation can audit without
+deleting.
+
+Don't pipe `ls-stale --json` directly into `cleanup` without an
+age filter; you'll race against just-stopped pods that the operator
+hasn't yet inspected. Use Option 4's `jq '.[] | select(.age_hours > 168)'`
+pattern (or your team's threshold) to scope the cleanup.
+
 ## See also
 
 - [`forensics-then-cleanup.md`](forensics-then-cleanup.md) — the

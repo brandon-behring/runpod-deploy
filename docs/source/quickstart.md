@@ -187,9 +187,10 @@ This will:
 
 Total time: ~3 minutes. Cost: ~$0.05 at RTX A4000 rates.
 
-If anything goes wrong, the pod is stopped (per `stop.on_failure: true`)
-and the failure flow logs a WARNING before the manifest write. Read
-[`troubleshooting.md`](troubleshooting.md) for failure-mode diagnostics.
+If anything goes wrong, the pod is stopped (per `lifecycle.on_failure: stop`,
+the default since v0.8.2) and the failure flow logs a WARNING before
+the manifest write. Read [`troubleshooting.md`](troubleshooting.md) for
+failure-mode diagnostics.
 
 ---
 

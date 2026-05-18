@@ -101,7 +101,8 @@ The pod's `--name` is set to `ctx.run_id` — which is *rendered*
 `run_id_prefix`.
 
 **Outputs**: provisioned pod with a public SSH port; pod_id stored
-in `spec.resolved_state_file` for later `runpod-deploy stop` recovery.
+in `spec.resolved_state_file` for later `runpod-deploy cleanup --state-file`
+recovery.
 
 ---
 
@@ -110,7 +111,8 @@ in `spec.resolved_state_file` for later `runpod-deploy stop` recovery.
 `_wait_for_sshd(runner)` polls the pod's SSH port until ready (default
 ~10 min timeout). The pod's `runpod/pytorch` base image usually boots
 in 30–90 seconds. Failures here raise `RuntimeError` and the pod is
-stopped (or preserved if `stop.on_failure: false`).
+acted on per `lifecycle.on_failure` (default `stop`; set to `preserve`
+to keep the pod for SSH forensics).
 
 ---
 
@@ -399,11 +401,11 @@ The orchestrator's `try`/`except`/`finally` block is the canonical
 failure flow:
 
 - **Exception before `run_started = True`** (phases 3–5c): no
-  artifact pulls (the run script never executed). Stop pod per
-  `stop.on_failure`. Log a WARNING.
+  artifact pulls (the run script never executed). Act on pod per
+  `lifecycle.on_failure`. Log a WARNING.
 - **Exception after `run_started = True`** (phases 5d/5e/6):
   best-effort artifact pull (suppresses second-order exceptions) +
-  `tel.capture_end()`. Stop pod per `stop.on_failure`.
+  `tel.capture_end()`. Act on pod per `lifecycle.on_failure`.
 - **Manifest always writes** in the `finally` block (suppressed
   exception during the write itself just logs).
 

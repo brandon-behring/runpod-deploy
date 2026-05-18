@@ -149,6 +149,32 @@ cached venv, 12 GB HF model):
 That's ~7 minutes saved per run, or ~30 minutes/week. The $7/month
 volume cost is recovered if your time is worth more than $0.20/h.
 
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Creating / sizing / pinning the network volume to a datacenter | `runpodctl network-volume create` (one-shot, manual) |
+| Resolving the volume by name on every run | `runpod-deploy run` (`provider.resolve_volume`) |
+| Mounting the volume at `/workspace` on the pod | `runpod-deploy run` (`storage.volume_mount`) |
+| Making rsync incremental (delete-aware) | `staging[].delete: false` in YAML |
+| Caching slow setup output (venv, model weights, apt caches) | Your `setup:` commands writing under `/workspace/...` |
+| Deciding when the cost of an idle volume is worth the speed | You (recipe trade-off table above) |
+| Migrating a volume to a different datacenter | Manual — RunPod doesn't move volumes; recreate + rsync |
+
+## Anti-pattern to avoid
+
+Don't pin every project to its own 1 TB volume "just in case". A 1 TB
+volume costs ~$70/month idle. Size to the workflow: typical Python
+project + cached venv + model weights = 50–100 GB.
+
+Don't share one volume across unrelated workflows by mounting at
+`/workspace` and writing into a project-specific subdirectory.
+`storage.volume_mount` is shared by every consumer that mounts the
+same volume; concurrent runs from different projects will corrupt
+each other's setup state. Either give each workflow its own volume,
+or pair the share with strict per-run subdirectory isolation enforced
+in `run.body:`.
+
 ## See also
 
 - [`lifecycle.md` §7b](../lifecycle.md#7b-cost-discipline-cleaning-up-after-forensics)
