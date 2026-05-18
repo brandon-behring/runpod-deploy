@@ -1,6 +1,6 @@
-# Migration notes (v0.9 and prompt-injection-v3)
+# Migration notes (v0.8.2 and prompt-injection-v3)
 
-## Lifecycle policy: `stop:` → `lifecycle:` (v0.9)
+## Lifecycle policy: `stop:` → `lifecycle:` (v0.8.2)
 
 The YAML `stop:` block is renamed to `lifecycle:` with three-valued
 actions instead of booleans, and the defaults change so that

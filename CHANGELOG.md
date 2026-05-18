@@ -4,6 +4,8 @@ This project follows Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-05-18 — Lifecycle redesign + preflight image/FUSE checks
+
 ### Added
 
 #### Scan-consumer FUSE foot-gun (closes #94)
