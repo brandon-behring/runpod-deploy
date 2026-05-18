@@ -74,7 +74,7 @@ distinguishes:
 - `EXITED` — clean shutdown after the run (your code finished or
   hit the success marker)
 - `RUNNING` — pod still active when manifest was written (means
-  `stop.on_*=false` and the pod was preserved)
+  `lifecycle.on_*: preserve` and the pod was preserved)
 - Anything else (`TERMINATED`, `FAILED`, `STOPPED`) — surfaced as a
   `pod_killed_unexpected` event in `events.jsonl`. Cross-reference
   RunPod console history to find the cause.
@@ -93,6 +93,19 @@ on a different DC (multi-DC failover) avoids the same outcome next time.
 | Aggregating across multiple manifests | Your driver (or `runpod_deploy.forensics.walk_run_dirs` + `load_manifest`) |
 | Deciding whether observed drift warrants tuning `assumed_hourly_rate_usd` | Your project's cost discipline |
 | Filing a cost-anomaly issue when drift exceeds your tolerance | Your release process |
+
+## Anti-pattern to avoid
+
+Don't hard-code cost-tolerance thresholds into the YAML config or wrap
+them in deploy-time `validate` rules. Cost drift is a *post-hoc*
+analytical concern — what counts as "too much" depends on the project's
+budget discipline, which evolves without code releases.
+
+Don't re-derive `estimated_cost_usd` in your driver from
+`wall_time_sec * gpu_price_per_hour_usd`; the manifest already
+computes it (with proper handling of the `pod_describe` vs
+`assumed_rate` price-source fallback) at `manifest._estimated_cost_usd`.
+Re-deriving risks divergence when the formula changes.
 
 ## See also
 

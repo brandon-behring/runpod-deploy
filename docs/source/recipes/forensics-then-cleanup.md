@@ -116,6 +116,17 @@ Or, for an automated nudge: see
 [`recipes/stale-pod-audit.md`](stale-pod-audit.md) for the JSON
 output pattern that feeds a Slack ping or GitHub Action.
 
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Emitting the cleanup-required WARNING with the exact `runpod-deploy cleanup` command | `runpod-deploy run` (`provider._log_stop_cleanup_nudge`) |
+| Listing EXITED pods + per-pod daily storage cost | `runpod-deploy ls-stale` |
+| Resuming a paused pod for SSH forensics | `runpodctl pod start <id>` + `runpod-deploy logs --config <yaml>` |
+| Bulk-releasing every EXITED pod | `runpod-deploy cleanup --all-stopped [--yes]` |
+| Deciding *which* stale pods to release vs preserve for ongoing analysis | You (operator judgment) |
+| Scheduling the audit (cron / GH Action / Slack ping) | Your hygiene rotation (see `stale-pod-audit.md`) |
+
 ## Anti-pattern to avoid
 
 Don't set `lifecycle.on_failure: stop` "just in case I want to debug

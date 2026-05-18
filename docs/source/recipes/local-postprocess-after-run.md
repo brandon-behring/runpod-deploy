@@ -69,6 +69,19 @@ Walk these in your own analysis script when you need to reconstruct
 | Plotting / aggregation / metrics computation | Your post-processing code (consumer-domain) |
 | Joining pulled artifacts with project-wide eval results | Your post-processing code |
 
+## Anti-pattern to avoid
+
+Don't push post-processing onto the pod (e.g. running plotting code
+inside `run.body:` or appending pandas aggregation to `setup:`). The
+pod is a deployment substrate, not a workflow runner — keep it
+single-responsibility (training, eval, generation). Local
+post-processing is fast (no SSH RTT), cheap (no GPU), and trivially
+re-runnable against pulled artifacts.
+
+If your post-processing legitimately needs GPU compute, that's a
+*second job* — a different `runpod-deploy run` config with its own
+artifacts, not a hidden second step inside the primary run.
+
 ## See also
 
 - [`local-preflight-then-run.md`](local-preflight-then-run.md) —

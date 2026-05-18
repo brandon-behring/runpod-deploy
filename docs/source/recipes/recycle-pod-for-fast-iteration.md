@@ -156,6 +156,33 @@ Three signals that a workflow shouldn't be on recycle anymore:
 3. **GPU class changes per run** — sweeps that rotate `gpu_order`
    force fresh-create every time anyway.
 
+## What lives where
+
+| Concern | Owner |
+|---|---|
+| Issuing `runpodctl pod stop` at end-of-run + preserving state-file | `runpod-deploy run` (`provider._cleanup_recycle`) |
+| Storing the resume pointer (pod_id + image + GPU + DC) | The state-file at `state_file:` (per-config) |
+| Validating that the paused pod still matches the spec (image / GPU / DC drift) | `runpod-deploy run` (`provider.try_resume_pod`) |
+| Calling `runpodctl pod start <id>` when validation passes | `runpod-deploy run` (`provider.try_resume_pod`) |
+| Forcing a fresh-create regardless of state-file | `runpod-deploy run --force-fresh` |
+| Deciding when recycle stops paying off (volume cost vs run frequency) | You (the trade-off above) |
+| Pairing with weekly `ls-stale` to catch forgotten paused pods | Your hygiene rotation |
+
+## Anti-pattern to avoid
+
+Don't use `lifecycle.on_success: recycle` on configs you run less than
+~3×/week. A 50 GB paused pod costs ~$5/mo idle; the recycle benefit
+(saved cold-start time × run frequency) needs to clear that floor.
+For low-frequency configs, the default `lifecycle.on_success: delete`
+is cheaper.
+
+Don't share one `state_file:` across multiple configs. The state-file
+is the resume pointer; if two configs both write to
+`~/.runpod-deploy-current` and the second config recycles a pod
+provisioned by the first, image / GPU / DC drift detection will fall
+through to fresh-create (with a WARNING) — defeating the purpose.
+Always give recycled configs unique `state_file:` paths.
+
 ## See also
 
 - [`lifecycle.md` §7](../lifecycle.md#7-lifecycle-action-cleanup) —
