@@ -465,3 +465,38 @@ def test_load_job_spec_rejects_recycle_on_failure(tmp_path: Path) -> None:
     config = _write_minimal_config(tmp_path / "job.yaml", extra=extra)
     with pytest.raises(ValueError, match="lifecycle.on_failure cannot be 'recycle'"):
         load_job_spec(config)
+
+
+# ---------- _config_parsers optional-field default branches (audit D5) ----------
+
+
+@pytest.mark.unit
+def test_load_job_spec_setup_null_yields_empty_tuple(tmp_path: Path) -> None:
+    """A bare 'setup:' (yaml null) parses as the same empty default as omission."""
+    config = _write_minimal_config(tmp_path / "job.yaml", extra="setup:\n")
+    spec = load_job_spec(config)
+    assert spec.setup == ()
+
+
+@pytest.mark.unit
+def test_load_job_spec_setup_non_list_raises(tmp_path: Path) -> None:
+    """A non-list 'setup:' is rejected with a diagnostic message."""
+    config = _write_minimal_config(tmp_path / "job.yaml", extra='setup: "echo hi"\n')
+    with pytest.raises(TypeError, match="setup must be a list of command mappings"):
+        load_job_spec(config)
+
+
+@pytest.mark.unit
+def test_load_job_spec_staging_null_yields_empty_tuple(tmp_path: Path) -> None:
+    """A bare 'staging:' (yaml null) parses as the same empty default as omission."""
+    config = _write_minimal_config(tmp_path / "job.yaml", extra="staging:\n")
+    spec = load_job_spec(config)
+    assert spec.staging == ()
+
+
+@pytest.mark.unit
+def test_load_job_spec_staging_non_list_raises(tmp_path: Path) -> None:
+    """A non-list 'staging:' is rejected with a diagnostic message."""
+    config = _write_minimal_config(tmp_path / "job.yaml", extra='staging: "rsync push"\n')
+    with pytest.raises(TypeError, match="staging must be a list of rsync push mappings"):
+        load_job_spec(config)
