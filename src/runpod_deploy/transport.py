@@ -32,7 +32,11 @@ class RsyncTransfer:
 
 @dataclass(frozen=True, slots=True)
 class RemoteRunner:
-    """Targets one SSH-ready pod."""
+    """Targets one SSH-ready pod.
+
+    Low-level — see :doc:`/python-api-vs-cli` for the recommended consumer
+    surface; this class is rarely needed directly.
+    """
 
     host: str
     port: int

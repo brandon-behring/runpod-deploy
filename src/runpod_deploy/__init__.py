@@ -54,6 +54,11 @@ from runpod_deploy.config import (
 from runpod_deploy.forensics import load_events, load_manifest, walk_run_dirs
 from runpod_deploy.metadata import capture_local_git, capture_payload_lockfile
 from runpod_deploy.orchestrator import run_job
+from runpod_deploy.preflight import (
+    DatacenterInventory,
+    InventoryReport,
+    report_gpu_inventory,
+)
 from runpod_deploy.pricing import (
     VOLUME_STORAGE_USD_PER_GB_MONTH,
     GpuPrice,
@@ -82,7 +87,9 @@ __all__ = [
     "ArtifactPullSpec",
     "BudgetSpec",
     "CommandSpec",
+    "DatacenterInventory",
     "GpuPrice",
+    "InventoryReport",
     "JobContext",
     "LifecycleAction",
     "LifecyclePolicySpec",
@@ -111,6 +118,7 @@ __all__ = [
     "load_events",
     "load_job_spec",
     "load_manifest",
+    "report_gpu_inventory",
     "resolve_volume",
     "rsync_argv",
     "run_job",

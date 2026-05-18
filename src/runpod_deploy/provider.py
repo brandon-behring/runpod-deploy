@@ -37,7 +37,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class PodConnection:
-    """SSH-ready RunPod connection details."""
+    """SSH-ready RunPod connection details.
+
+    Low-level — see :doc:`/python-api-vs-cli` for the recommended consumer
+    surface; this type is rarely needed directly.
+    """
 
     pod_id: str
     host: str
@@ -55,6 +59,10 @@ def select_gpu_across_datacenters(
     max_gpu_price_usd: float | None = None,
 ) -> tuple[str, str]:
     """Select first available (gpu_id, datacenter_id) across the failover list.
+
+    Low-level — see :doc:`/python-api-vs-cli` for the recommended consumer
+    surface; this function is rarely needed directly. The CLI exposes the
+    same logic via ``runpod-deploy run`` (which uses this internally).
 
     Iterates ``datacenters`` in order; within each DC iterates ``gpu_order``
     and returns the first GPU with non-empty/non-"out" stock. When a DC
@@ -608,6 +616,98 @@ class StalePod:
     estimated_daily_cost_usd: float
 
 
+def _cleanup_preserve(
+    pod_id: str,
+    *,
+    dry_run: bool,
+    state_file: Path | None,
+    volume_in_gb: int | None,
+) -> None:
+    del dry_run, state_file, volume_in_gb
+    logger.warning(
+        f"[lifecycle] pod {pod_id!r} preserved "
+        f"(compute + disk continue billing); "
+        f"release manually with: runpodctl pod delete {pod_id}"
+    )
+
+
+def _cleanup_stop(
+    pod_id: str,
+    *,
+    dry_run: bool,
+    state_file: Path | None,
+    volume_in_gb: int | None,
+) -> None:
+    argv = ["runpodctl", "pod", "stop", pod_id]
+    log_cmd(logger, "runpodctl", argv)
+    if not (dry_run or pod_id == "<pod-id>"):
+        result = subprocess.run(argv, capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            logger.warning(
+                f"[warn] failed to stop pod {pod_id}: "
+                f"stdout={result.stdout} stderr={result.stderr}"
+            )
+            return
+    _log_stop_cleanup_nudge(pod_id, state_file=state_file, volume_in_gb=volume_in_gb)
+
+
+def _cleanup_delete(
+    pod_id: str,
+    *,
+    dry_run: bool,
+    state_file: Path | None,
+    volume_in_gb: int | None,
+) -> None:
+    del volume_in_gb
+    argv = ["runpodctl", "pod", "delete", pod_id]
+    log_cmd(logger, "runpodctl", argv)
+    if dry_run or pod_id == "<pod-id>":
+        return
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        logger.warning(
+            f"[warn] failed to delete pod {pod_id}: "
+            f"stdout={result.stdout} stderr={result.stderr}"
+        )
+        return
+    if state_file is not None:
+        state_file.unlink(missing_ok=True)
+    logger.info(f"[lifecycle] pod {pod_id!r} deleted; volume disk released")
+
+
+def _cleanup_recycle(
+    pod_id: str,
+    *,
+    dry_run: bool,
+    state_file: Path | None,
+    volume_in_gb: int | None,
+) -> None:
+    del state_file, volume_in_gb
+    argv = ["runpodctl", "pod", "stop", pod_id]
+    log_cmd(logger, "runpodctl", argv)
+    if dry_run or pod_id == "<pod-id>":
+        return
+    result = subprocess.run(argv, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        logger.warning(
+            f"[warn] failed to recycle pod {pod_id}: "
+            f"stdout={result.stdout} stderr={result.stderr}"
+        )
+        return
+    # State file is intentionally preserved — it's the resume pointer the
+    # next runpod-deploy run reads to find this pod.
+    logger.info(f"[lifecycle] pod {pod_id!r} recycled (paused for reuse on next run)")
+
+
+_CleanupHandler = Callable[..., None]
+_CLEANUP_HANDLERS: dict[LifecycleAction, _CleanupHandler] = {
+    "preserve": _cleanup_preserve,
+    "stop": _cleanup_stop,
+    "delete": _cleanup_delete,
+    "recycle": _cleanup_recycle,
+}
+
+
 def cleanup_pod(
     pod_id: str,
     *,
@@ -618,7 +718,7 @@ def cleanup_pod(
 ) -> None:
     """Take a lifecycle action on a pod after a run completes.
 
-    Three actions:
+    Four actions, dispatched via :data:`_CLEANUP_HANDLERS`:
 
     * ``"preserve"`` — leave the pod alone; compute and disk continue
       billing. Logs a WARNING with the manual-release command.
@@ -630,6 +730,8 @@ def cleanup_pod(
       operator can release the pod by name later.
     * ``"delete"`` — issue ``runpodctl pod delete``; compute stops and
       volume disk is released. State file is removed on success.
+    * ``"recycle"`` — issue ``runpodctl pod stop``; state file preserved
+      so the next run can resume the paused pod.
 
     The sentinel ``pod_id == "<pod-id>"`` (used by offline dry-runs)
     short-circuits all subprocess calls.
@@ -638,66 +740,13 @@ def cleanup_pod(
         ValueError: if ``action`` is not in
             :data:`runpod_deploy.config.LIFECYCLE_ACTIONS`.
     """
-    if action == "preserve":
-        logger.warning(
-            f"[lifecycle] pod {pod_id!r} preserved "
-            f"(compute + disk continue billing); "
-            f"release manually with: runpodctl pod delete {pod_id}"
+    handler = _CLEANUP_HANDLERS.get(action)
+    if handler is None:
+        raise ValueError(
+            f"cleanup_pod: unknown action {action!r}; "
+            f"expected 'preserve', 'stop', 'delete', or 'recycle'"
         )
-        return
-
-    if action == "stop":
-        argv = ["runpodctl", "pod", "stop", pod_id]
-        log_cmd(logger, "runpodctl", argv)
-        if not (dry_run or pod_id == "<pod-id>"):
-            result = subprocess.run(argv, capture_output=True, text=True, check=False)
-            if result.returncode != 0:
-                logger.warning(
-                    f"[warn] failed to stop pod {pod_id}: "
-                    f"stdout={result.stdout} stderr={result.stderr}"
-                )
-                return
-        _log_stop_cleanup_nudge(pod_id, state_file=state_file, volume_in_gb=volume_in_gb)
-        return
-
-    if action == "delete":
-        argv = ["runpodctl", "pod", "delete", pod_id]
-        log_cmd(logger, "runpodctl", argv)
-        if dry_run or pod_id == "<pod-id>":
-            return
-        result = subprocess.run(argv, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            logger.warning(
-                f"[warn] failed to delete pod {pod_id}: "
-                f"stdout={result.stdout} stderr={result.stderr}"
-            )
-            return
-        if state_file is not None:
-            state_file.unlink(missing_ok=True)
-        logger.info(f"[lifecycle] pod {pod_id!r} deleted; volume disk released")
-        return
-
-    if action == "recycle":
-        argv = ["runpodctl", "pod", "stop", pod_id]
-        log_cmd(logger, "runpodctl", argv)
-        if dry_run or pod_id == "<pod-id>":
-            return
-        result = subprocess.run(argv, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            logger.warning(
-                f"[warn] failed to recycle pod {pod_id}: "
-                f"stdout={result.stdout} stderr={result.stderr}"
-            )
-            return
-        # State file is intentionally preserved — it's the resume pointer the
-        # next runpod-deploy run reads to find this pod.
-        logger.info(f"[lifecycle] pod {pod_id!r} recycled (paused for reuse on next run)")
-        return
-
-    raise ValueError(
-        f"cleanup_pod: unknown action {action!r}; "
-        f"expected 'preserve', 'stop', 'delete', or 'recycle'"
-    )
+    handler(pod_id, dry_run=dry_run, state_file=state_file, volume_in_gb=volume_in_gb)
 
 
 def _log_stop_cleanup_nudge(

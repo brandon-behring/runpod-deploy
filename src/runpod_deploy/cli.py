@@ -12,7 +12,7 @@ import logging
 import re
 import shlex
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -925,8 +925,31 @@ def _cmd_logs(args: argparse.Namespace) -> int:
     return runner.ssh_stream(cmd)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    """CLI entry point."""
+_HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
+    "validate": _cmd_validate,
+    "run": _cmd_run,
+    "cleanup": _cmd_cleanup,
+    "ls-stale": _cmd_ls_stale,
+    "logs": _cmd_logs,
+    "gpu-list": _cmd_gpu_list,
+    "gpu-inventory": _cmd_gpu_inventory,
+    "gpu-prices": _cmd_gpu_prices,
+    "estimate": _cmd_estimate,
+    "ls-runs": _cmd_ls_runs,
+    "compare-runs": _cmd_compare_runs,
+    "events": _cmd_events,
+    "events-query": _cmd_events_query,
+    "capture-env": _cmd_capture_env,
+    "manifest-summary": _cmd_manifest_summary,
+}
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the runpod-deploy argparse hierarchy.
+
+    Pure (no side effects). Extracted from main() so the parser shape
+    is independently unit-testable (see tests/test_cli_parser.py).
+    """
     verbosity = _verbosity_parser()
     parser = argparse.ArgumentParser(description="Config-driven RunPod deployment.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1291,6 +1314,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "multi-shard sweep. Mutually exclusive with the positional manifest arg.",
     )
 
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry point. Build the parser, dispatch to the handler."""
+    parser = _build_parser()
     # Shell completion via argcomplete (no-op unless the `[completion]`
     # extra is installed and `eval "$(register-python-argcomplete runpod-deploy)"`
     # is in the shell rc). Must come before `parser.parse_args`.
@@ -1303,24 +1332,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     _configure_logging(_level_from_args(args))
-    handlers = {
-        "validate": _cmd_validate,
-        "run": _cmd_run,
-        "cleanup": _cmd_cleanup,
-        "ls-stale": _cmd_ls_stale,
-        "logs": _cmd_logs,
-        "gpu-list": _cmd_gpu_list,
-        "gpu-inventory": _cmd_gpu_inventory,
-        "gpu-prices": _cmd_gpu_prices,
-        "estimate": _cmd_estimate,
-        "ls-runs": _cmd_ls_runs,
-        "compare-runs": _cmd_compare_runs,
-        "events": _cmd_events,
-        "events-query": _cmd_events_query,
-        "capture-env": _cmd_capture_env,
-        "manifest-summary": _cmd_manifest_summary,
-    }
-    return handlers[args.command](args)
+    return _HANDLERS[args.command](args)
 
 
 if __name__ == "__main__":
